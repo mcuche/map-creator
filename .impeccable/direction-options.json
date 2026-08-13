@@ -1,0 +1,72 @@
+{
+  "title": "Choose the map editor's visual world",
+  "question": "Keep the letterpress worktable, choose an alternate, or ask for a fresh set.",
+  "options": [
+    {
+      "id": "assigned",
+      "label": "Composing Table",
+      "kicker": "PROPOSED DIRECTION",
+      "lineage": "letterpress composing stones and type drawers",
+      "thesis": "Build the map like a printed proof: landscapes are sheets and pixel pieces are movable sorts.",
+      "palette": ["#172327", "#D7C7A4", "#B74932", "#77A6A1", "#F3E9CE"],
+      "materials": ["inked paper", "dark iron", "registration marks", "shallow wooden drawers"],
+      "viewport": "A large painted forest map fills the center, framed by a narrow tool rail and an open drawer of crisp pixel characters.",
+      "risk": "The printshop metaphor must remain functional and never make ordinary editing actions cryptic.",
+      "sketch": ".impeccable/sketches/composing-table.png"
+    },
+    {
+      "id": "challenger-cyclorama",
+      "label": "Scene & Cue Desk",
+      "lineage": "theatre scene shops and cyclorama lighting desks",
+      "thesis": "Treat the painted landscape as a stage and every pixel character as a cast member or prop.",
+      "palette": ["#111827", "#3557A8", "#D67A73", "#F0C96B", "#F7F2E8"],
+      "materials": ["painted flats", "cue tape", "dark control desk", "soft stage light"],
+      "viewport": "The map is a brightly lit stage at center with a cast-and-props rail at left and scene controls along the bottom.",
+      "risk": "Strong audience identification, but theatrical labels could obscure familiar file and layer concepts.",
+      "case": "Nearly wins on audience identification; the composing table is clearer for grid placement and image export.",
+      "sketch": ".impeccable/sketches/scene-cue-desk.png",
+      "hero": "https://impeccable.style/worlds/cards/stagecraft-theater-lighting-cyclorama-dawn-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/stagecraft-theater-lighting-cyclorama-dawn.webp"
+    },
+    {
+      "id": "challenger-grid-specimen",
+      "label": "Grid Specimen",
+      "lineage": "Wim Crouwel construction-grid specimens",
+      "thesis": "Let the battle grid become the visible armature for every control, label, and placed piece.",
+      "palette": ["#F4F1E8", "#4B83B6", "#E24932", "#1E2528"],
+      "materials": ["graph paper", "construction blue", "registration red", "flat ink"],
+      "viewport": "A monumental map occupies a strict modular grid while asset controls snap into the same visible cells.",
+      "risk": "Excellent product clarity, but its clinical graphic language fights the painted-fantasy atmosphere.",
+      "case": "Wins on grid clarity but loses decisively on the requested fantasy character of the finished map.",
+      "sketch": ".impeccable/sketches/grid-specimen.png",
+      "hero": "https://impeccable.style/worlds/cards/crouwel-grid-specimen-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/crouwel-grid-specimen.webp"
+    },
+    {
+      "id": "challenger-teletext",
+      "label": "Teletext Bestiary",
+      "lineage": "broadcast teletext magazines",
+      "thesis": "Make the asset library a numbered pixel bestiary with instant keyboard recall.",
+      "palette": ["#050505", "#00D9D9", "#F4E84A", "#E84A4A", "#F4F4F4"],
+      "materials": ["bitmap cells", "broadcast black", "mosaic graphics", "status flags"],
+      "viewport": "A dark 40-column frame surrounds the painted map while characters appear in bright indexed pixel compartments.",
+      "risk": "Fuses poorly because its fixed black broadcast field competes with the painted landscape instead of supporting it.",
+      "case": "Strongest pixel identity, but lower map clarity and weaker compatibility with painted backgrounds.",
+      "sketch": ".impeccable/sketches/teletext-bestiary.png",
+      "hero": "https://impeccable.style/worlds/cards/broadcast-programming-teletext-service-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/broadcast-programming-teletext-service.webp"
+    }
+  ],
+  "reroll": true,
+  "canon": true,
+  "canonCard": {
+    "label": "Conventional map editor",
+    "thesis": "A familiar dark desktop editor with a toolbar, asset browser, central canvas, and properties panel.",
+    "palette": ["#202327", "#2C3035", "#5A93C9", "#E7E9EB"],
+    "materials": ["graphite panels", "hairline dividers", "neutral controls"],
+    "viewport": "A standard three-panel editor surrounds the map with predictable Windows-style controls.",
+    "risk": "Immediately familiar but visually interchangeable with generic level editors.",
+    "sketch": ".impeccable/sketches/conventional-editor.png"
+  },
+  "steer": true
+}

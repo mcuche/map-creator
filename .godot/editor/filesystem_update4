@@ -1,0 +1,5 @@
+res://scripts/asset_drag_button.gd
+res://scripts/main.gd
+res://scripts/map_canvas.gd
+res://scripts/pixel_asset_preview.gd
+res://scripts/grid_detector.gd
