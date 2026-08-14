@@ -112,7 +112,7 @@ The palette is a dark theatre shell with warm paper type and sparse, high-signal
 
 The root is a full-rect vertical shell: a 54px command bar, an expanding three-column body, and a 32px status bar. The body keeps a permanent 276px Cast & Props rail on the left, an expanding stage with 8px margins, and a compact 260px Stage Controls panel on the right. The canvas has a 720×480 minimum and uses a 24×16 logical cell map; cell size scales to the available stage.
 
-The library uses two-column 120×116 asset cards with a large pixel-model preview and the name plus grid footprint underneath, separated by 6px gaps and 14px group spacing. Panels use 12px horizontal and 10px vertical content margins. The configured desktop viewport is 1600×900 with a 1440×810 window override; no breakpoint behavior is established in code.
+The library uses two-column 114×116 asset cards with a large pixel-model preview and the name plus grid footprint underneath, separated by 6px gaps and 14px group spacing. A 12px end gutter keeps the vertical scrollbar clear of the cards. Panels use 12px horizontal and 10px vertical content margins. The configured desktop viewport is 1600×900 with a 1440×810 window override; no breakpoint behavior is established in code.
 
 ## Elevation & Depth
 

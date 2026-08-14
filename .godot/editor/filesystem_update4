@@ -1,5 +1,5 @@
-res://scripts/asset_drag_button.gd
 res://scripts/main.gd
+res://main.tscn
 res://scripts/map_canvas.gd
-res://scripts/pixel_asset_preview.gd
-res://scripts/grid_detector.gd
+res://tests/test_asset_filter.gd
+res://scripts/asset_drag_button.gd

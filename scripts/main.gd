@@ -10,10 +10,18 @@ extends Control
 const AssetCatalogScript = preload("res://scripts/asset_catalog.gd")
 const MapCanvasScript = preload("res://scripts/map_canvas.gd")
 const AssetDragButtonScript = preload("res://scripts/asset_drag_button.gd")
+const CHEVRON_UP_SVG := "<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'><path d='M2 8L6 4L10 8' stroke='#F0C96B' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/></svg>"
+const CHEVRON_DOWN_SVG := "<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'><path d='M2 4L6 8L10 4' stroke='#F0C96B' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/></svg>"
 
 var map_canvas: BattleMapCanvas
 var assets: Array = []
 var asset_buttons := {}
+var asset_group_controls := {}
+var asset_search: LineEdit
+var asset_library_scroll: ScrollContainer
+var asset_scroll_content: MarginContainer
+var chevron_up_icon: Texture2D
+var chevron_down_icon: Texture2D
 var selection_name: Label
 var piece_action_buttons: Array[Button] = []
 var grid_label: Label
@@ -54,6 +62,8 @@ var palette := {
 
 func _ready() -> void:
 	assets = AssetCatalogScript.all_assets()
+	chevron_up_icon = _svg_icon(CHEVRON_UP_SVG)
+	chevron_down_icon = _svg_icon(CHEVRON_DOWN_SVG)
 	theme = _build_theme()
 	_build_interface()
 	_build_dialogs()
@@ -85,10 +95,14 @@ func _build_interface() -> void:
 	_add_button(commands, "NEW", _new_map, "Clear the current stage")
 	_add_button(commands, "OPEN", _show_open, "Open an editable battle map")
 	_add_button(commands, "SAVE", _save, "Save the editable battle map")
-	_add_button(commands, "LANDSCAPE", _show_background, "Import a painted background")
+	_add_button(commands, "IMPORT LANDSCAPE", _show_background, "Import a painted background")
 	_add_spacer(commands, 12)
-	_add_button(commands, "UNDO", _undo, "Undo the last change")
-	_add_button(commands, "REDO", _redo, "Redo the last undone change")
+	var undo_button := _add_button(commands, "↶", _undo, "Undo")
+	undo_button.add_theme_font_size_override("font_size", 28)
+	_compact_large_glyph_button(undo_button)
+	var redo_button := _add_button(commands, "↷", _redo, "Redo")
+	redo_button.add_theme_font_size_override("font_size", 28)
+	_compact_large_glyph_button(redo_button)
 	_add_spacer(commands, 12)
 	_add_button(commands, "−", _zoom_out, "Zoom out (Ctrl+-)")
 	zoom_label = Label.new()
@@ -105,9 +119,8 @@ func _build_interface() -> void:
 	grid_label.add_theme_color_override("font_color", palette.muted)
 	commands.add_child(grid_label)
 	grid_select = OptionButton.new()
+	grid_select.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	grid_select.add_item("Overlay")
-	grid_select.add_item("Detected", BattleMapCanvas.GRID_DETECTED)
-	grid_select.set_item_disabled(1, true)
 	grid_select.add_item("Hidden")
 	grid_select.item_selected.connect(_on_grid_selected)
 	commands.add_child(grid_select)
@@ -116,8 +129,13 @@ func _build_interface() -> void:
 	commands.add_child(flexible)
 	var export_button := _add_button(commands, "EXPORT PNG", _show_export, "Export the stage as a PNG image")
 	export_button.add_theme_stylebox_override("normal", _button_style(palette.gold, palette.gold.darkened(0.18)))
+	export_button.add_theme_stylebox_override("hover", _button_style(palette.gold.lightened(0.14), palette.gold.darkened(0.03)))
+	export_button.add_theme_stylebox_override("pressed", _button_style(palette.gold.darkened(0.06), palette.gold.darkened(0.22)))
+	export_button.add_theme_stylebox_override("focus", _button_style(palette.gold, palette.paper.darkened(0.15)))
 	export_button.add_theme_color_override("font_color", Color("1b2429"))
 	export_button.add_theme_color_override("font_hover_color", Color("111827"))
+	export_button.add_theme_color_override("font_pressed_color", Color("111827"))
+	export_button.add_theme_color_override("font_focus_color", Color("111827"))
 
 	var body := HBoxContainer.new()
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -156,29 +174,43 @@ func _build_library() -> Control:
 	column.add_theme_constant_override("separation", 8)
 	panel.add_child(column)
 	column.add_child(_section_title("CAST & PROPS"))
-	var search := LineEdit.new()
-	search.placeholder_text = "Search cast and props"
-	search.text_changed.connect(_filter_assets)
-	column.add_child(search)
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	column.add_child(scroll)
+	asset_search = LineEdit.new()
+	asset_search.placeholder_text = "Search cast and props"
+	asset_search.text_changed.connect(_filter_assets)
+	column.add_child(asset_search)
+	asset_library_scroll = ScrollContainer.new()
+	asset_library_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	asset_library_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	column.add_child(asset_library_scroll)
+	asset_scroll_content = MarginContainer.new()
+	asset_scroll_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	asset_library_scroll.add_child(asset_scroll_content)
+	asset_library_scroll.get_v_scroll_bar().visibility_changed.connect(_sync_asset_library_gutter)
+	_sync_asset_library_gutter.call_deferred()
 	var groups := VBoxContainer.new()
 	groups.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	groups.add_theme_constant_override("separation", 14)
-	scroll.add_child(groups)
+	asset_scroll_content.add_child(groups)
 	for group_name in ["CAST", "CREATURES", "PROPS", "SCENERY"]:
-		groups.add_child(_small_heading(group_name))
+		var section := VBoxContainer.new()
+		section.add_theme_constant_override("separation", 6)
+		groups.add_child(section)
+		var heading := _category_heading(group_name)
+		section.add_child(heading)
 		var grid := GridContainer.new()
 		grid.columns = 2
 		grid.add_theme_constant_override("h_separation", 6)
 		grid.add_theme_constant_override("v_separation", 6)
-		groups.add_child(grid)
+		section.add_child(grid)
+		asset_group_controls[group_name] = {"section": section, "heading": heading, "grid": grid, "expanded": true, "has_matches": true}
+		heading.pressed.connect(_toggle_asset_group.bind(group_name))
 		for asset in assets:
 			if asset["group"] != group_name:
 				continue
 			var button: AssetDragButton = AssetDragButtonScript.new()
-			button.custom_minimum_size = Vector2(120, 116)
+			button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+			button.custom_minimum_size = Vector2(114, 116)
+			button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			button.configure(asset, map_canvas.drag_preview_size_for_asset)
 			grid.add_child(button)
 			asset_buttons[asset["id"]] = button
@@ -192,6 +224,7 @@ func _build_cue_book() -> Control:
 	column.add_theme_constant_override("separation", 10)
 	panel.add_child(column)
 	column.add_child(_section_title("STAGE CONTROLS"))
+	column.add_child(HSeparator.new())
 	selection_name = _detail_label("Nothing selected", palette.muted)
 	selection_name.add_theme_font_size_override("font_size", 16)
 	column.add_child(selection_name)
@@ -214,7 +247,7 @@ func _build_cue_book() -> Control:
 	grid_cue_controls.add_theme_constant_override("separation", 10)
 	column.add_child(grid_cue_controls)
 	grid_cue_controls.add_child(HSeparator.new())
-	grid_cue_controls.add_child(_small_heading("GRID CUE"))
+	grid_cue_controls.add_child(_small_heading("GRID SETTINGS", 14))
 	var dimensions := GridContainer.new()
 	dimensions.columns = 2
 	dimensions.add_theme_constant_override("h_separation", 8)
@@ -243,6 +276,7 @@ func _build_cue_book() -> Control:
 	color_label.text = "Grid line color"
 	grid_cue_controls.add_child(color_label)
 	grid_color_picker = ColorPickerButton.new()
+	grid_color_picker.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	grid_color_picker.color = map_canvas.grid_color
 	grid_color_picker.edit_alpha = false
 	grid_color_picker.custom_minimum_size.y = 34
@@ -260,8 +294,9 @@ func _build_cue_book() -> Control:
 	grid_opacity.value_changed.connect(_on_grid_opacity_changed)
 	grid_cue_controls.add_child(grid_opacity)
 	column.add_child(HSeparator.new())
-	column.add_child(_small_heading("LANDSCAPES"))
+	column.add_child(_small_heading("LANDSCAPES", 14))
 	landscape_select = OptionButton.new()
+	landscape_select.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	landscape_select.add_theme_constant_override("icon_max_width", 48)
 	landscape_select.add_icon_item(_transparent_landscape_icon(), "Default")
 	landscape_select.add_icon_item(load("res://assets/landscapes/forest.png"), "Forest")
@@ -348,9 +383,37 @@ func _on_asset_dropped() -> void:
 
 func _filter_assets(query: String) -> void:
 	var normalized := query.strip_edges().to_lower()
+	var visible_groups := {}
 	for asset in assets:
 		var button: Button = asset_buttons[asset["id"]]
-		button.visible = normalized.is_empty() or normalized in str(asset["name"]).to_lower() or normalized in str(asset["group"]).to_lower()
+		var matches := normalized.is_empty() or normalized in str(asset["name"]).to_lower() or normalized in str(asset["group"]).to_lower()
+		button.visible = matches
+		if matches:
+			visible_groups[asset["group"]] = true
+	for group_name in asset_group_controls:
+		var controls: Dictionary = asset_group_controls[group_name]
+		var group_visible := visible_groups.has(group_name)
+		controls["has_matches"] = group_visible
+		controls["section"].visible = group_visible
+		controls["grid"].visible = group_visible and bool(controls["expanded"])
+	_sync_asset_library_gutter.call_deferred()
+
+func _toggle_asset_group(group_name: String) -> void:
+	var controls: Dictionary = asset_group_controls[group_name]
+	var expanded := not bool(controls["expanded"])
+	controls["expanded"] = expanded
+	var heading: Button = controls["heading"]
+	var grid: GridContainer = controls["grid"]
+	heading.icon = chevron_up_icon if expanded else chevron_down_icon
+	heading.tooltip_text = ("Collapse %s" if expanded else "Expand %s") % group_name.to_lower()
+	grid.visible = expanded and bool(controls["has_matches"])
+	_sync_asset_library_gutter.call_deferred()
+
+func _sync_asset_library_gutter() -> void:
+	if not is_instance_valid(asset_library_scroll) or not is_instance_valid(asset_scroll_content):
+		return
+	var scrollbar_visible := asset_library_scroll.get_v_scroll_bar().visible
+	asset_scroll_content.add_theme_constant_override("margin_right", 12 if scrollbar_visible else 0)
 
 func _on_selection_changed(piece) -> void:
 	_set_piece_actions_enabled(piece != null)
@@ -369,8 +432,6 @@ func _on_selection_changed(piece) -> void:
 func _on_grid_selected(index: int) -> void:
 	var canvas_mode := BattleMapCanvas.GRID_SQUARE
 	if index == 1:
-		canvas_mode = BattleMapCanvas.GRID_DETECTED
-	elif index == 2:
 		canvas_mode = BattleMapCanvas.GRID_HIDDEN
 	map_canvas.set_grid_mode(canvas_mode)
 	_sync_grid_controls()
@@ -535,11 +596,8 @@ func _sync_grid_controls() -> void:
 	grid_label.visible = not detected
 	grid_select.visible = not detected
 	grid_cue_controls.visible = not detected
-	grid_select.set_item_disabled(1, not detected)
-	if map_canvas.grid_mode == BattleMapCanvas.GRID_DETECTED and detected:
+	if map_canvas.grid_mode == BattleMapCanvas.GRID_HIDDEN:
 		grid_select.select(1)
-	elif map_canvas.grid_mode == BattleMapCanvas.GRID_HIDDEN:
-		grid_select.select(2)
 	else:
 		grid_select.select(0)
 	grid_opacity.editable = map_canvas.grid_mode == BattleMapCanvas.GRID_SQUARE
@@ -641,11 +699,27 @@ func _update_status(message: String) -> void:
 
 func _add_button(parent: Control, text: String, callback: Callable, tooltip: String) -> Button:
 	var button := Button.new()
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	button.text = text
 	button.tooltip_text = tooltip
 	button.pressed.connect(callback)
 	parent.add_child(button)
 	return button
+
+func _compact_large_glyph_button(button: Button) -> void:
+	var vertical_offset := -4.0
+	button.add_theme_stylebox_override("normal", _offset_button_style(palette.panel_raised, palette.line, vertical_offset))
+	button.add_theme_stylebox_override("hover", _offset_button_style(Color("293844"), palette.cobalt.lightened(0.2), vertical_offset))
+	button.add_theme_stylebox_override("pressed", _offset_button_style(Color("26375b"), palette.cobalt, vertical_offset))
+	button.add_theme_stylebox_override("focus", _offset_button_style(Color("26375b"), palette.gold, vertical_offset))
+
+func _offset_button_style(color: Color, border: Color, vertical_offset: float) -> StyleBoxFlat:
+	var style := _button_style(color, border, 0)
+	if vertical_offset >= 0.0:
+		style.content_margin_top = vertical_offset * 2.0
+	else:
+		style.content_margin_bottom = -vertical_offset * 2.0
+	return style
 
 func _add_piece_action(parent: Control, text: String, callback: Callable, tooltip: String) -> Button:
 	var button := _add_button(parent, text, callback, tooltip)
@@ -677,12 +751,49 @@ func _section_title(text: String) -> Label:
 	label.add_theme_font_size_override("font_size", 17)
 	return label
 
-func _small_heading(text: String) -> Label:
+func _small_heading(text: String, font_size: int = 11) -> Label:
 	var label := Label.new()
 	label.text = text
 	label.add_theme_color_override("font_color", palette.gold)
-	label.add_theme_font_size_override("font_size", 11)
+	label.add_theme_font_size_override("font_size", font_size)
 	return label
+
+func _category_heading(text: String) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.icon = chevron_up_icon
+	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	button.icon_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.custom_minimum_size.y = 26
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	button.tooltip_text = "Collapse %s" % text.to_lower()
+	button.add_theme_font_size_override("font_size", 11)
+	button.add_theme_color_override("font_color", palette.gold)
+	button.add_theme_color_override("font_hover_color", palette.paper)
+	button.add_theme_color_override("font_pressed_color", palette.paper)
+	button.add_theme_color_override("font_focus_color", palette.gold)
+	button.add_theme_stylebox_override("normal", _category_heading_style(Color.TRANSPARENT, Color.TRANSPARENT))
+	button.add_theme_stylebox_override("hover", _category_heading_style(palette.panel_raised, palette.line))
+	button.add_theme_stylebox_override("pressed", _category_heading_style(palette.stage, palette.cobalt))
+	button.add_theme_stylebox_override("focus", _category_heading_style(Color.TRANSPARENT, palette.gold))
+	return button
+
+func _category_heading_style(color: Color, border: Color) -> StyleBoxFlat:
+	var style := _button_style(color, border, 0)
+	style.content_margin_left = 4
+	style.content_margin_right = 4
+	style.content_margin_top = 2
+	style.content_margin_bottom = 2
+	return style
+
+func _svg_icon(source: String) -> Texture2D:
+	var image := Image.new()
+	var error := image.load_svg_from_string(source)
+	if error != OK:
+		push_error("Could not create category chevron icon")
+		return null
+	return ImageTexture.create_from_image(image)
 
 func _detail_label(text: String, color: Color) -> Label:
 	var label := Label.new()
@@ -725,7 +836,7 @@ func _panel_style(color: Color, top: int, right: int, bottom: int, left: int) ->
 	style.content_margin_bottom = 10
 	return style
 
-func _button_style(color: Color, border: Color) -> StyleBoxFlat:
+func _button_style(color: Color, border: Color, vertical_margin: float = 7) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = color
 	style.border_color = border
@@ -736,6 +847,6 @@ func _button_style(color: Color, border: Color) -> StyleBoxFlat:
 	style.corner_radius_bottom_right = 4
 	style.content_margin_left = 10
 	style.content_margin_right = 10
-	style.content_margin_top = 7
-	style.content_margin_bottom = 7
+	style.content_margin_top = vertical_margin
+	style.content_margin_bottom = vertical_margin
 	return style

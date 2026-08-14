@@ -1,8 +1,8 @@
 78098b89c88a74ebe8c20117b8754620
-::res://::1786628869
+::res://::1786688268
 DESIGN.md::TextFile::-1::1786614831::0::1::::<><><>0<>0<><>::
 export_presets.cfg::TextFile::-1::1786618983::0::1::::<><><>0<>0<><>::
-main.tscn::PackedScene::-1::1786546933::0::1::::<><><>0<>0<><>::res://scripts/main.gd
+main.tscn::PackedScene::485568610425913294::1786688268::0::1::::<><><>0<>0<><>::uid://broklar6h8llu::::res://scripts/main.gd
 PRODUCT.md::TextFile::-1::1786608259::0::1::::<><><>0<>0<><>::
 README.md::TextFile::-1::1786616253::0::1::::<><><>0<>0<><>::
 ::res://assets/::1786613806
@@ -24,11 +24,11 @@ ruined_wall.png::CompressedTexture2D::7883635667622284113::1786606342::178662887
 skeleton.png::CompressedTexture2D::8348135555354347248::1786605790::1786628875::1::::<><><>0<>0<>0435a2149d6b035f69fec39175cc5757<>res://.godot/imported/skeleton.png-3c82138048422abf990547c960b9a428.ctex::
 table.png::CompressedTexture2D::2232332442608358562::1786606311::1786628876::1::::<><><>0<>0<>601b7d0b9f9668dfa26a8f262ca11846<>res://.godot/imported/table.png-0afb39c623f92c6645a8e7795ac9c73d.ctex::
 tree.png::CompressedTexture2D::8416933804258415288::1786605790::1786628875::1::::<><><>0<>0<>9dd98407faa946a0aa7ca82faf2b57e2<>res://.godot/imported/tree.png-15cb16b197553088007c6ba3ce2f75b0.ctex::
-::res://scripts/::1786606866
+::res://scripts/::1786688268
 asset_catalog.gd::GDScript::1309893940700237996::1786605849::0::1::::AssetCatalog<>RefCounted<><>0<>0<><>::
 asset_drag_button.gd::GDScript::1554842304353476911::1786618070::0::1::::AssetDragButton<>Button<><>0<>0<><>::
 grid_detector.gd::GDScript::6080859228069872945::1786627840::0::1::::GridDetector<>RefCounted<><>0<>0<><>::
-main.gd::GDScript::3609159155437944654::1786629611::0::1::::<>Control<><>0<>0<><>::
+main.gd::GDScript::3609159155437944654::1786688375::0::1::::<>Control<><>0<>0<><>::
 map_canvas.gd::GDScript::657888635969467654::1786628146::0::1::::BattleMapCanvas<>Control<><>0<>0<><>::
 pixel_asset_preview.gd::GDScript::8163369028107733917::1786618070::0::1::::PixelAssetPreview<>Control<><>0<>0<><>::
 ::res://tests/::1786627845

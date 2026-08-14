@@ -28,6 +28,7 @@ func _build_contents() -> void:
 		return
 	var column := VBoxContainer.new()
 	column.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	column.offset_bottom = -2
 	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_theme_constant_override("separation", 2)
 	add_child(column)

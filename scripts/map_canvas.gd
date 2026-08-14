@@ -85,6 +85,7 @@ func _ready() -> void:
 
 func _add_context_action(parent: VBoxContainer, label: String, action_id: int, color := Color.WHITE) -> void:
 	var button := Button.new()
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	button.text = label
 	button.custom_minimum_size = Vector2(160, 34)
 	button.flat = true
