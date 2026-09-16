@@ -3,29 +3,25 @@ extends Button
 
 const PixelAssetPreviewScript = preload("res://scripts/pixel_asset_preview.gd")
 
-var asset_id := ""
-var asset_name := ""
-var footprint := Vector2i.ONE
-var asset_data: Dictionary = {}
-var drag_size_provider: Callable
+var entry: Dictionary = {}
 var preview_control: PixelAssetPreview
 var name_label: Label
 var footprint_label: Label
 
-func configure(asset: Dictionary, preview_size_provider := Callable()) -> void:
-	asset_data = asset
-	drag_size_provider = preview_size_provider
-	asset_id = str(asset["id"])
-	asset_name = str(asset["name"])
-	footprint = asset["footprint"]
+func configure(catalog_entry: Dictionary) -> void:
+	entry = catalog_entry.duplicate(true)
+	var entry_name := str(entry["name"])
+	var footprint: Vector2i = entry["footprint"]
 	text = ""
-	tooltip_text = "Drag %s onto the map — occupies %d × %d grid cells" % [asset_name, footprint.x, footprint.y]
+	tooltip_text = "Drag %s onto the map — occupies %d × %d grid cells" % [entry_name, footprint.x, footprint.y]
 	mouse_default_cursor_shape = Control.CURSOR_DRAG
 	_build_contents()
 
 func _build_contents() -> void:
 	if get_child_count() > 0:
 		return
+	var entry_name := str(entry["name"])
+	var footprint: Vector2i = entry["footprint"]
 	var column := VBoxContainer.new()
 	column.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	column.offset_bottom = -2
@@ -35,10 +31,10 @@ func _build_contents() -> void:
 	preview_control = PixelAssetPreviewScript.new()
 	preview_control.custom_minimum_size = Vector2(76, 70)
 	preview_control.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	preview_control.configure(asset_data)
+	preview_control.configure(entry)
 	column.add_child(preview_control)
 	name_label = Label.new()
-	name_label.text = asset_name
+	name_label.text = entry_name
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	name_label.add_theme_font_size_override("font_size", 12)
@@ -52,9 +48,10 @@ func _build_contents() -> void:
 	column.add_child(footprint_label)
 
 func _get_drag_data(_at_position: Vector2):
-	var preview_size := Vector2(96, 82)
-	if drag_size_provider.is_valid():
-		preview_size = drag_size_provider.call(asset_id)
+	var footprint: Vector2i = entry["footprint"]
+	var longest_side := maxf(float(footprint.x), float(footprint.y))
+	var preview_size := Vector2(footprint) / longest_side * 96.0
+	preview_size = preview_size.max(Vector2(32, 32))
 	var preview := Control.new()
 	preview.custom_minimum_size = preview_size
 	preview.size = preview_size
@@ -64,10 +61,10 @@ func _get_drag_data(_at_position: Vector2):
 	model.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	model.custom_minimum_size = preview_size
 	model.content_inset = 0.0
-	model.configure(asset_data)
+	model.configure(entry)
 	preview.add_child(model)
 	set_drag_preview(preview)
 	return {
-		"type": "asset",
-		"asset_id": asset_id
+		"type": "catalog_entry",
+		"entry": entry.duplicate(true)
 	}

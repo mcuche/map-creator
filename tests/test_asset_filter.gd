@@ -1,81 +1,121 @@
 extends Node
 
-const MainScript = preload("res://scripts/main.gd")
+const CastPropsLibraryScript = preload("res://scripts/cast_props_library.gd")
+
 
 func _ready() -> void:
-	var main: Control = MainScript.new()
-	main.size = Vector2(1600, 900)
-	add_child(main)
-
-	main._filter_assets("cast")
-	await get_tree().process_frame
-	await get_tree().process_frame
-	if not main.asset_group_controls["CAST"]["section"].visible:
-		_fail("CAST title was hidden despite containing a matching asset")
+	var library: CastPropsLibrary = CastPropsLibraryScript.new()
+	library.size = Vector2(276, 700)
+	add_child(library)
+	var loaded := library.initialize(CastPropsLibrary.STARTER_CATALOG_PATH, CastPropsLibrary.STARTER_IMAGE_DIR)
+	if not loaded["ok"]:
+		_fail("Starter catalog did not load: %s" % loaded["errors"])
 		return
-	for group_name in ["CREATURES", "PROPS", "SCENERY"]:
-		if main.asset_group_controls[group_name]["section"].visible:
-			_fail("%s title remained visible without a matching asset" % group_name)
+	if library.catalog_snapshot().size() != 12:
+		_fail("Starter catalog did not expose twelve validated entries")
+		return
+	var bootstrap_dir := "user://catalog-bootstrap-test-%d" % Time.get_ticks_usec()
+	var bootstrap_error := library._bootstrap_user_catalog(bootstrap_dir)
+	if not bootstrap_error.is_empty():
+		_fail("First-run catalog bootstrap failed: %s" % bootstrap_error)
+		return
+	if not FileAccess.file_exists(bootstrap_dir.path_join("catalog.json")):
+		_fail("First-run bootstrap did not create catalog.json")
+		return
+	for file_name in CastPropsLibrary.STARTER_IMAGE_FILES:
+		var image_path := bootstrap_dir.path_join("images").path_join(file_name)
+		if Image.load_from_file(image_path).is_empty():
+			_fail("First-run bootstrap did not create a readable PNG: %s" % file_name)
 			return
-	if main.asset_scroll_content.get_theme_constant("margin_right") != 0:
-		_fail("Asset library kept a scrollbar gutter when no scrollbar was visible")
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(image_path))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(bootstrap_dir.path_join("catalog.json")))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(bootstrap_dir.path_join("images")))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(bootstrap_dir))
+	var recovery_dir := "user://catalog-recovery-test-%d" % Time.get_ticks_usec()
+	var images_dir := recovery_dir.path_join("images")
+	if DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(images_dir)) != OK:
+		_fail("Could not create recovery fixture")
 		return
-	var cast_section: VBoxContainer = main.asset_group_controls["CAST"]["section"]
-	var cast_grid: GridContainer = main.asset_group_controls["CAST"]["grid"]
-	if not is_equal_approx(cast_section.size.x, main.asset_search.size.x):
-		_fail("Category title width did not match the search input without a scrollbar")
+	var hero_path := images_dir.path_join("hero.png")
+	var custom_hero := Image.create(2, 2, false, Image.FORMAT_RGBA8)
+	custom_hero.fill(Color.BLUE)
+	if custom_hero.save_png(hero_path) != OK:
+		_fail("Could not write custom hero fixture")
 		return
-	if not is_equal_approx(cast_grid.size.x, main.asset_search.size.x):
-		_fail("Object grid width did not match the search input without a scrollbar")
+	var original_bytes := FileAccess.get_file_as_bytes(hero_path)
+	bootstrap_error = library._bootstrap_user_catalog(recovery_dir)
+	if not bootstrap_error.is_empty() or FileAccess.get_file_as_bytes(hero_path) != original_bytes:
+		_fail("Catalog recovery replaced a user image: %s" % bootstrap_error)
 		return
-	var ranger_button: Button = main.asset_buttons["ranger"]
-	var object_row_width := ranger_button.position.x + ranger_button.size.x
-	if not is_equal_approx(object_row_width, main.asset_search.size.x):
-		_fail("Object cards did not fill the search input width without a scrollbar")
+	var recovery_library: CastPropsLibrary = CastPropsLibraryScript.new()
+	add_child(recovery_library)
+	if not recovery_library.initialize(recovery_dir.path_join("catalog.json"))["ok"]:
+		_fail("Recovered catalog could not be loaded")
 		return
-	var hero_contents: VBoxContainer = main.asset_buttons["hero"].get_child(0)
-	if not is_equal_approx(hero_contents.offset_bottom, -2.0):
-		_fail("Object size label did not retain its bottom inset")
-		return
-
-	main._filter_assets("no matching object")
-	for group_name in main.asset_group_controls:
-		if main.asset_group_controls[group_name]["section"].visible:
-			_fail("%s title remained visible for an empty result set" % group_name)
+	for file_name in CastPropsLibrary.STARTER_IMAGE_FILES:
+		if not FileAccess.file_exists(images_dir.path_join(file_name)):
+			_fail("Catalog recovery omitted %s" % file_name)
 			return
-
-	main._filter_assets("")
+	recovery_library.queue_free()
 	await get_tree().process_frame
-	await get_tree().process_frame
-	for group_name in main.asset_group_controls:
-		if not main.asset_group_controls[group_name]["section"].visible:
-			_fail("%s title did not return after clearing the filter" % group_name)
-			return
-	if not main.asset_library_scroll.get_v_scroll_bar().visible:
-		_fail("Full asset library did not restore its scrollbar")
+	for file_name in CastPropsLibrary.STARTER_IMAGE_FILES:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(images_dir.path_join(file_name)))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(recovery_dir.path_join("catalog.json")))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(images_dir))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(recovery_dir))
+
+	library.set_filter("cast")
+	if library.visible_group_ids() != ["cast"]:
+		_fail("Filtering by group did not isolate CAST")
 		return
-	if main.asset_scroll_content.get_theme_constant("margin_right") != 12:
-		_fail("Asset library did not restore its scrollbar gutter")
+	library.set_filter("no matching entry")
+	if not library.visible_group_ids().is_empty():
+		_fail("Groups remained visible without matching entries")
+		return
+	library.set_filter("")
+	if library.visible_group_ids() != ["cast", "creatures", "props", "scenery"]:
+		_fail("Clearing the filter did not restore ordered groups")
+		return
+	library._groups.append({"id": "empty", "name": "Empty"})
+	library._rebuild_cards()
+	var empty_group: Dictionary = library._group_views["empty"]
+	if not empty_group["section"].visible or not empty_group["empty_hint"].visible \
+			or empty_group["empty_hint"].text != "Nothing in this group yet.":
+		_fail("Empty group did not explain why it has no cards")
+		return
+	library._toggle_group("empty")
+	if empty_group["empty_hint"].visible:
+		_fail("Collapsed group kept its empty message visible")
+		return
+	library.set_filter("cast")
+	if empty_group["section"].visible:
+		_fail("Empty group appeared in filtered results")
 		return
 
-	var cast_heading: Button = main.asset_group_controls["CAST"]["heading"]
-	cast_heading.pressed.emit()
-	if main.asset_group_controls["CAST"]["grid"].visible:
-		_fail("CAST objects remained visible after collapsing the category")
+	var invalid_path := "user://invalid-catalog-test.json"
+	var starter_file := FileAccess.open(CastPropsLibrary.STARTER_CATALOG_PATH, FileAccess.READ)
+	var catalog_file := FileAccess.open(invalid_path, FileAccess.WRITE)
+	catalog_file.store_string(starter_file.get_as_text())
+	catalog_file = null
+	var reload_library: CastPropsLibrary = CastPropsLibraryScript.new()
+	add_child(reload_library)
+	var initial_result := reload_library.initialize(invalid_path, CastPropsLibrary.STARTER_IMAGE_DIR)
+	var retained_snapshot := reload_library.catalog_snapshot()
+	catalog_file = FileAccess.open(invalid_path, FileAccess.WRITE)
+	catalog_file.store_string('{"version":1,"groups":[],"entries":[],"unexpected":true}')
+	catalog_file = null
+	var invalid_result := reload_library.reload_catalog()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(invalid_path))
+	if not initial_result["ok"] or invalid_result["ok"] or "unknown field" not in str(invalid_result["errors"]):
+		_fail("Unknown catalog fields did not reject the load")
 		return
-	if cast_heading.icon != main.chevron_down_icon:
-		_fail("Collapsed CAST category did not show the down chevron")
-		return
-	cast_heading.pressed.emit()
-	if not main.asset_group_controls["CAST"]["grid"].visible:
-		_fail("CAST objects did not return after expanding the category")
-		return
-	if cast_heading.icon != main.chevron_up_icon:
-		_fail("Expanded CAST category did not show the up chevron")
+	if reload_library.catalog_snapshot() != retained_snapshot:
+		_fail("A rejected reload did not retain the previous catalog")
 		return
 
-	print("Asset filter tests passed")
+	print("Cast & Props catalog tests passed")
 	get_tree().quit(0)
+
 
 func _fail(message: String) -> void:
 	push_error(message)

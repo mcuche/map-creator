@@ -12,7 +12,7 @@ A personal Windows desktop map-building tool for fantasy tabletop sessions, buil
 - Import a painted background image
 - Preserve imported landscape proportions with centered side or top/bottom borders
 - Detect regular square grids in imported landscapes and snap to them without drawing a second grid
-- Save and load editable `.battlemap` files
+- Save and load editable `.battlemap` files with the PNGs used by placed pieces embedded once per image
 - Export the visible map stage as PNG
 
 ## Run
@@ -25,7 +25,7 @@ Do not use **F6** while a test file is selected: F6 runs the current scene or sc
 
 ## Tests
 
-Run the occupancy test through its scene wrapper, `res://tests/test_occupancy.tscn`, rather than running `test_occupancy.gd` directly.
+Run the occupancy test through its scene wrapper, `res://tests/test_occupancy.tscn`, rather than running `test_occupancy.gd` directly. The occupancy scene runs headlessly and checks that PNG export returns `ERR_UNAVAILABLE` there. Run `res://tests/test_export.tscn` with a renderer to verify successful PNG output and its dimensions.
 
 ## Shortcuts
 
@@ -37,3 +37,7 @@ Run the occupancy test through its scene wrapper, `res://tests/test_occupancy.ts
 - `Delete` — remove selected piece
 
 The bundled library includes an original detailed fantasy pixel-art sprite set. Import a landscape through **LANDSCAPE**; custom pixel-asset importing is planned for a later iteration.
+
+## Custom Cast & Props
+
+The Cast & Props panel creates a user-owned `catalog.json` and image folder on first run. Use **OPEN FOLDER** to edit them and **RELOAD** to validate and apply changes. See [CATALOG.md](CATALOG.md) for the schema and limits.

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "groups": [
+    { "id": "cast", "name": "CAST" },
+    { "id": "creatures", "name": "CREATURES" },
+    { "id": "props", "name": "PROPS" },
+    { "id": "scenery", "name": "SCENERY" }
+  ],
+  "entries": [
+    { "id": "hero", "name": "Hero", "group_id": "cast", "footprint": [1, 1], "image": "images/hero.png" },
+    { "id": "ranger", "name": "Ranger", "group_id": "cast", "footprint": [1, 1], "image": "images/ranger.png" },
+    { "id": "mage", "name": "Mage", "group_id": "cast", "footprint": [1, 1], "image": "images/mage.png" },
+    { "id": "goblin", "name": "Goblin", "group_id": "creatures", "footprint": [1, 1], "image": "images/goblin.png" },
+    { "id": "skeleton", "name": "Skeleton", "group_id": "creatures", "footprint": [1, 1], "image": "images/skeleton.png" },
+    { "id": "dire_wolf", "name": "Dire wolf", "group_id": "creatures", "footprint": [2, 1], "image": "images/dire_wolf.png" },
+    { "id": "chest", "name": "Chest", "group_id": "props", "footprint": [1, 1], "image": "images/chest.png" },
+    { "id": "campfire", "name": "Campfire", "group_id": "props", "footprint": [1, 1], "image": "images/campfire.png" },
+    { "id": "table", "name": "Table", "group_id": "props", "footprint": [2, 1], "image": "images/table.png" },
+    { "id": "tree", "name": "Ancient tree", "group_id": "scenery", "footprint": [2, 2], "image": "images/tree.png" },
+    { "id": "rock", "name": "Boulder", "group_id": "scenery", "footprint": [1, 1], "image": "images/rock.png" },
+    { "id": "ruined_wall", "name": "Ruined wall", "group_id": "scenery", "footprint": [3, 1], "image": "images/ruined_wall.png" }
+  ]
+}

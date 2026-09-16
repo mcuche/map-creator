@@ -7,21 +7,11 @@ extends Control
 # FORM: Combined Scene & Cue layout approved from scene-cue-layout-2.png; direction seed 700e5698.
 # FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
 
-const AssetCatalogScript = preload("res://scripts/asset_catalog.gd")
 const MapCanvasScript = preload("res://scripts/map_canvas.gd")
-const AssetDragButtonScript = preload("res://scripts/asset_drag_button.gd")
-const CHEVRON_UP_SVG := "<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'><path d='M2 8L6 4L10 8' stroke='#F0C96B' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/></svg>"
-const CHEVRON_DOWN_SVG := "<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'><path d='M2 4L6 8L10 4' stroke='#F0C96B' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/></svg>"
+const CastPropsLibraryScript = preload("res://scripts/cast_props_library.gd")
 
 var map_canvas: BattleMapCanvas
-var assets: Array = []
-var asset_buttons := {}
-var asset_group_controls := {}
-var asset_search: LineEdit
-var asset_library_scroll: ScrollContainer
-var asset_scroll_content: MarginContainer
-var chevron_up_icon: Texture2D
-var chevron_down_icon: Texture2D
+var cast_props_library: CastPropsLibrary
 var selection_name: Label
 var piece_action_buttons: Array[Button] = []
 var grid_label: Label
@@ -61,13 +51,9 @@ var palette := {
 }
 
 func _ready() -> void:
-	assets = AssetCatalogScript.all_assets()
-	chevron_up_icon = _svg_icon(CHEVRON_UP_SVG)
-	chevron_down_icon = _svg_icon(CHEVRON_DOWN_SVG)
 	theme = _build_theme()
 	_build_interface()
 	_build_dialogs()
-	map_canvas.set_catalog(assets)
 	map_canvas.selection_changed.connect(_on_selection_changed)
 	map_canvas.state_changed.connect(_refresh_actions)
 	map_canvas.placement_finished.connect(_on_asset_dropped)
@@ -75,7 +61,7 @@ func _ready() -> void:
 	map_canvas.zoom_changed.connect(_on_zoom_changed)
 	map_canvas.resized.connect(_update_grid_shape_warning)
 	_sync_manual_grid_inputs()
-	_update_status("Stage ready — drag an item from Cast & Props onto the map")
+	cast_props_library.initialize()
 
 func _build_interface() -> void:
 	var shell := VBoxContainer.new()
@@ -167,54 +153,14 @@ func _build_interface() -> void:
 	status.add_child(status_label)
 
 func _build_library() -> Control:
-	var panel := PanelContainer.new()
-	panel.custom_minimum_size.x = 276
-	panel.add_theme_stylebox_override("panel", _panel_style(palette.panel, 0, 1, 0, 0))
-	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 8)
-	panel.add_child(column)
-	column.add_child(_section_title("CAST & PROPS"))
-	asset_search = LineEdit.new()
-	asset_search.placeholder_text = "Search cast and props"
-	asset_search.text_changed.connect(_filter_assets)
-	column.add_child(asset_search)
-	asset_library_scroll = ScrollContainer.new()
-	asset_library_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	asset_library_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	column.add_child(asset_library_scroll)
-	asset_scroll_content = MarginContainer.new()
-	asset_scroll_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	asset_library_scroll.add_child(asset_scroll_content)
-	asset_library_scroll.get_v_scroll_bar().visibility_changed.connect(_sync_asset_library_gutter)
-	_sync_asset_library_gutter.call_deferred()
-	var groups := VBoxContainer.new()
-	groups.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	groups.add_theme_constant_override("separation", 14)
-	asset_scroll_content.add_child(groups)
-	for group_name in ["CAST", "CREATURES", "PROPS", "SCENERY"]:
-		var section := VBoxContainer.new()
-		section.add_theme_constant_override("separation", 6)
-		groups.add_child(section)
-		var heading := _category_heading(group_name)
-		section.add_child(heading)
-		var grid := GridContainer.new()
-		grid.columns = 2
-		grid.add_theme_constant_override("h_separation", 6)
-		grid.add_theme_constant_override("v_separation", 6)
-		section.add_child(grid)
-		asset_group_controls[group_name] = {"section": section, "heading": heading, "grid": grid, "expanded": true, "has_matches": true}
-		heading.pressed.connect(_toggle_asset_group.bind(group_name))
-		for asset in assets:
-			if asset["group"] != group_name:
-				continue
-			var button: AssetDragButton = AssetDragButtonScript.new()
-			button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-			button.custom_minimum_size = Vector2(114, 116)
-			button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			button.configure(asset, map_canvas.drag_preview_size_for_asset)
-			grid.add_child(button)
-			asset_buttons[asset["id"]] = button
-	return panel
+	cast_props_library = CastPropsLibraryScript.new()
+	cast_props_library.status_message.connect(_update_status)
+	cast_props_library.catalog_changed.connect(_on_catalog_changed)
+	return cast_props_library
+
+
+func _on_catalog_changed(_entries_by_id: Dictionary) -> void:
+	map_canvas.refresh_piece_images()
 
 func _build_cue_book() -> Control:
 	var panel := PanelContainer.new()
@@ -381,52 +327,18 @@ func _dialog(mode: FileDialog.FileMode, filters: Array[String]) -> FileDialog:
 func _on_asset_dropped() -> void:
 	_update_status("Piece placed — drag it between cells or drag another item onto the map")
 
-func _filter_assets(query: String) -> void:
-	var normalized := query.strip_edges().to_lower()
-	var visible_groups := {}
-	for asset in assets:
-		var button: Button = asset_buttons[asset["id"]]
-		var matches := normalized.is_empty() or normalized in str(asset["name"]).to_lower() or normalized in str(asset["group"]).to_lower()
-		button.visible = matches
-		if matches:
-			visible_groups[asset["group"]] = true
-	for group_name in asset_group_controls:
-		var controls: Dictionary = asset_group_controls[group_name]
-		var group_visible := visible_groups.has(group_name)
-		controls["has_matches"] = group_visible
-		controls["section"].visible = group_visible
-		controls["grid"].visible = group_visible and bool(controls["expanded"])
-	_sync_asset_library_gutter.call_deferred()
-
-func _toggle_asset_group(group_name: String) -> void:
-	var controls: Dictionary = asset_group_controls[group_name]
-	var expanded := not bool(controls["expanded"])
-	controls["expanded"] = expanded
-	var heading: Button = controls["heading"]
-	var grid: GridContainer = controls["grid"]
-	heading.icon = chevron_up_icon if expanded else chevron_down_icon
-	heading.tooltip_text = ("Collapse %s" if expanded else "Expand %s") % group_name.to_lower()
-	grid.visible = expanded and bool(controls["has_matches"])
-	_sync_asset_library_gutter.call_deferred()
-
-func _sync_asset_library_gutter() -> void:
-	if not is_instance_valid(asset_library_scroll) or not is_instance_valid(asset_scroll_content):
-		return
-	var scrollbar_visible := asset_library_scroll.get_v_scroll_bar().visible
-	asset_scroll_content.add_theme_constant_override("margin_right", 12 if scrollbar_visible else 0)
-
 func _on_selection_changed(piece) -> void:
 	_set_piece_actions_enabled(piece != null)
 	if piece == null:
 		selection_name.text = "Nothing selected"
 		selection_name.add_theme_color_override("font_color", palette.muted)
 		return
-	var asset = map_canvas.get_asset_for_piece(piece)
-	if asset == null:
+	var entry = piece.get("entry", null)
+	if not entry is Dictionary:
 		selection_name.text = "Unknown object"
 		selection_name.add_theme_color_override("font_color", palette.muted)
 		return
-	selection_name.text = str(asset.get("name", "Unknown object"))
+	selection_name.text = str(entry.get("name", "Unknown object"))
 	selection_name.add_theme_color_override("font_color", palette.gold)
 
 func _on_grid_selected(index: int) -> void:
@@ -553,11 +465,32 @@ func _save() -> void:
 func _save_to_path(path: String) -> void:
 	if not path.to_lower().ends_with(".battlemap"):
 		path += ".battlemap"
-	var file := FileAccess.open(path, FileAccess.WRITE)
+	var save_result := map_canvas.serialize_portable_state()
+	if save_result.has("error"):
+		_update_status("Could not save: %s" % save_result["error"])
+		return
+	var absolute_path := ProjectSettings.globalize_path(path)
+	var temporary_path := "%s.%d.tmp" % [absolute_path, Time.get_ticks_usec()]
+	while FileAccess.file_exists(temporary_path) or DirAccess.dir_exists_absolute(temporary_path):
+		temporary_path = "%s.%d.tmp" % [absolute_path, Time.get_ticks_usec()]
+	var file := FileAccess.open(temporary_path, FileAccess.WRITE)
 	if file == null:
 		_update_status("Could not save: %s" % FileAccess.get_open_error())
 		return
-	file.store_string(JSON.stringify(map_canvas.serialize_state(), "\t"))
+	file.store_string(JSON.stringify(save_result["data"], "\t"))
+	file.flush()
+	var write_error := file.get_error()
+	file = null
+	if write_error != OK:
+		DirAccess.remove_absolute(temporary_path)
+		_update_status("Could not save: write error %s" % write_error)
+		return
+	var rename_error := DirAccess.rename_absolute(temporary_path, absolute_path)
+	if rename_error != OK:
+		DirAccess.remove_absolute(temporary_path)
+		_update_status("Could not save: replace error %s" % rename_error)
+		return
+	map_canvas.commit_portable_images(save_result["images"])
 	current_path = path
 	_update_status("Saved %s" % path.get_file())
 
@@ -570,7 +503,10 @@ func _load_from_path(path: String) -> void:
 	if not data is Dictionary:
 		_update_status("This file is not a valid battle map")
 		return
-	map_canvas.load_state(data)
+	var load_error := map_canvas.load_state(data)
+	if not load_error.is_empty():
+		_update_status("Could not open battle map: %s" % load_error)
+		return
 	_sync_grid_controls()
 	_sync_manual_grid_inputs()
 	_sync_landscape_select()
@@ -688,12 +624,6 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_rotate_right()
 		get_viewport().set_input_as_handled()
 
-func _asset_by_id(asset_id: String) -> Dictionary:
-	for asset in assets:
-		if asset["id"] == asset_id:
-			return asset
-	return {}
-
 func _update_status(message: String) -> void:
 	status_label.text = "  %s    |    Right-click Object Menu    Right-drag Pan    Wheel Zoom    Ctrl+0 Fit" % message
 
@@ -757,43 +687,6 @@ func _small_heading(text: String, font_size: int = 11) -> Label:
 	label.add_theme_color_override("font_color", palette.gold)
 	label.add_theme_font_size_override("font_size", font_size)
 	return label
-
-func _category_heading(text: String) -> Button:
-	var button := Button.new()
-	button.text = text
-	button.icon = chevron_up_icon
-	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	button.icon_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	button.custom_minimum_size.y = 26
-	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	button.tooltip_text = "Collapse %s" % text.to_lower()
-	button.add_theme_font_size_override("font_size", 11)
-	button.add_theme_color_override("font_color", palette.gold)
-	button.add_theme_color_override("font_hover_color", palette.paper)
-	button.add_theme_color_override("font_pressed_color", palette.paper)
-	button.add_theme_color_override("font_focus_color", palette.gold)
-	button.add_theme_stylebox_override("normal", _category_heading_style(Color.TRANSPARENT, Color.TRANSPARENT))
-	button.add_theme_stylebox_override("hover", _category_heading_style(palette.panel_raised, palette.line))
-	button.add_theme_stylebox_override("pressed", _category_heading_style(palette.stage, palette.cobalt))
-	button.add_theme_stylebox_override("focus", _category_heading_style(Color.TRANSPARENT, palette.gold))
-	return button
-
-func _category_heading_style(color: Color, border: Color) -> StyleBoxFlat:
-	var style := _button_style(color, border, 0)
-	style.content_margin_left = 4
-	style.content_margin_right = 4
-	style.content_margin_top = 2
-	style.content_margin_bottom = 2
-	return style
-
-func _svg_icon(source: String) -> Texture2D:
-	var image := Image.new()
-	var error := image.load_svg_from_string(source)
-	if error != OK:
-		push_error("Could not create category chevron icon")
-		return null
-	return ImageTexture.create_from_image(image)
 
 func _detail_label(text: String, color: Color) -> Label:
 	var label := Label.new()

@@ -1,17 +1,14 @@
 extends Node
 
-const AssetCatalogScript = preload("res://scripts/asset_catalog.gd")
 const MapCanvasScript = preload("res://scripts/map_canvas.gd")
+
+const HERO := {"id": "hero", "name": "Hero", "group_id": "cast", "footprint": Vector2i(1, 1), "image_path": "res://assets/sprites/hero.png"}
+const TABLE := {"id": "table", "name": "Long table", "group_id": "props", "footprint": Vector2i(2, 1), "image_path": "res://assets/sprites/table.png"}
 
 func _ready() -> void:
 	var canvas: BattleMapCanvas = MapCanvasScript.new()
 	add_child(canvas)
-	canvas.set_catalog(AssetCatalogScript.all_assets())
 	canvas.size = Vector2(720, 480)
-	var hero_drag_size := canvas.drag_preview_size_for_asset("hero")
-	if not hero_drag_size.is_equal_approx(Vector2(48.857143, 45.6)):
-		_fail("Drag preview size does not match the placed model's 95% cell size: %s" % hero_drag_size)
-		return
 	var default_outline_width := canvas.selection_outline_width()
 	canvas.detected_grid_origin = Vector2.ZERO
 	canvas.detected_grid_spacing = Vector2(1.0 / 28.0, 1.0 / 24.0)
@@ -56,8 +53,8 @@ func _ready() -> void:
 		_fail("Built-in landscape did not retain manual-grid mode")
 		return
 	canvas.pieces = [
-		{"instance_id": 1, "asset_id": "hero", "cell": Vector2i(2, 2), "rotation": 0, "mirrored": false, "layer": 0},
-		{"instance_id": 2, "asset_id": "table", "cell": Vector2i(5, 4), "rotation": 0, "mirrored": false, "layer": 1}
+		{"instance_id": 1, "entry": HERO.duplicate(true), "cell": Vector2i(2, 2), "rotation": 0, "mirrored": false, "layer": 0},
+		{"instance_id": 2, "entry": TABLE.duplicate(true), "cell": Vector2i(5, 4), "rotation": 0, "mirrored": false, "layer": 1}
 	]
 	if canvas.context_menu == null or canvas.context_menu_buttons.size() != 3:
 		_fail("Object context menu was not created with three actions")
@@ -98,13 +95,28 @@ func _ready() -> void:
 		return
 	var restored: BattleMapCanvas = MapCanvasScript.new()
 	add_child(restored)
-	restored.set_catalog(AssetCatalogScript.all_assets())
 	restored.load_state(saved)
 	if not restored.grid_color.is_equal_approx(custom_grid_color):
 		_fail("Custom grid line color was not restored from the saved map")
 		return
-	if not bool(saved["pieces"][1]["mirrored"]):
+	if not bool(saved["pieces"][1]["mirrored"]) or saved["pieces"][1]["entry"]["id"] != "table":
 		_fail("Mirror state was not serialized")
+		return
+	var legacy := saved.duplicate(true)
+	legacy["version"] = 1
+	legacy["pieces"] = [{"instance_id": 9, "asset_id": "hero", "cell_x": 1, "cell_y": 1, "rotation": 0, "mirrored": false, "layer": 0}]
+	var legacy_restored: BattleMapCanvas = MapCanvasScript.new()
+	add_child(legacy_restored)
+	legacy_restored.load_state(legacy)
+	var legacy_entry: Dictionary = legacy_restored.pieces[0]["entry"]
+	if legacy_entry["name"] != "Hero" or legacy_entry["footprint"] != Vector2i.ONE \
+			or legacy_entry["image_path"] != HERO["image_path"]:
+		_fail("Legacy catalog ID did not restore its frozen v1 definition")
+		return
+	legacy["pieces"] = [{"instance_id": 10, "asset_id": "unknown", "cell_x": 1, "cell_y": 1}]
+	legacy_restored.load_state(legacy)
+	if legacy_restored.pieces[0]["entry"]["name"] != "Missing catalog entry":
+		_fail("Unknown legacy ID did not use a missing-entry placeholder")
 		return
 	canvas._on_context_action(BattleMapCanvas.CONTEXT_MIRROR)
 	if bool(canvas.get_selected_piece()["mirrored"]):
@@ -147,18 +159,10 @@ func _ready() -> void:
 	if not is_equal_approx(canvas.zoom_level, 1.0) or canvas.view_offset != Vector2.ZERO:
 		_fail("Fit did not reset the map view")
 		return
-	var large_background := Image.create(1280, 960, false, Image.FORMAT_RGBA8)
-	large_background.fill(Color("263d2c"))
-	canvas.background_texture = ImageTexture.create_from_image(large_background)
 	var export_path := "user://export-resolution-test.png"
 	var export_error := await canvas.export_visible_png(export_path)
-	if export_error != OK:
-		_fail("High-resolution export failed with error %d" % export_error)
-		return
-	var exported := Image.load_from_file(export_path)
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(export_path))
-	if exported.get_size() != Vector2i(1280, 960):
-		_fail("Export used the editor canvas size instead of the landscape resolution: %s" % exported.get_size())
+	if export_error != ERR_UNAVAILABLE:
+		_fail("Headless export should return ERR_UNAVAILABLE, got %d" % export_error)
 		return
 	print("Occupancy and mirror tests passed")
 	get_tree().quit(0)

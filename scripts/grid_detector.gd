@@ -139,17 +139,18 @@ static func _find_period(scores: PackedFloat32Array) -> Dictionary:
 				candidate_position += spacing
 			if line_scores.size() < MIN_GRID_LINES:
 				continue
-			line_scores.sort()
-			var reliable_count := maxi(MIN_GRID_LINES, int(line_scores.size() * 0.65))
-			var reliable_total := 0.0
-			for index in range(line_scores.size() - reliable_count, line_scores.size()):
-				reliable_total += line_scores[index]
-			var line_mean := reliable_total / float(reliable_count)
+			var line_total := 0.0
+			var supported := 0
+			for line_score in line_scores:
+				line_total += line_score
+				if line_score >= mean * 1.25:
+					supported += 1
+			var line_mean := line_total / float(line_scores.size())
 			var quality := line_mean / maxf(mean, 0.0001)
 			if quality > float(candidates.get(spacing, {"quality": 0.0})["quality"]):
-				candidates[spacing] = {"quality": quality, "spacing": spacing, "offset": offset}
+				candidates[spacing] = {"quality": quality, "support": float(supported) / float(line_scores.size()), "spacing": spacing, "offset": offset}
 			if quality > float(best["quality"]):
-				best = {"quality": quality, "spacing": spacing, "offset": offset}
+				best = candidates[spacing]
 	if float(best["quality"]) < 1.55:
 		return {"found": false}
 	best = _prefer_supported_finer_harmonic(best, candidates)
@@ -188,7 +189,7 @@ static func _prefer_supported_finer_harmonic(best: Dictionary, candidates: Dicti
 			for candidate_spacing in range(maxi(MIN_SPACING, roundi(expected) - 3), roundi(expected) + 4):
 				if candidates.has(candidate_spacing) and float(candidates[candidate_spacing]["quality"]) > float(finer["quality"]):
 					finer = candidates[candidate_spacing]
-			if float(finer["quality"]) >= float(result["quality"]) * 0.735:
+			if float(finer["quality"]) >= float(result["quality"]) * 0.735 and float(finer.get("support", 0.0)) >= 0.8:
 				next = finer
 				break
 		if next == result:

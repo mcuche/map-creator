@@ -25,10 +25,14 @@ const CONTEXT_MENU_SIZE := Vector2i(168, 136)
 const CONTEXT_MIRROR := 0
 const CONTEXT_ROTATE := 1
 const CONTEXT_REMOVE := 2
+const MAX_EMBEDDED_IMAGE_BYTES := 2 * 1024 * 1024
+const MAX_EMBEDDED_IMAGES_BYTES := 32 * 1024 * 1024
+const MAX_EMBEDDED_IMAGE_DIMENSION := 4096
 const GridDetectorScript = preload("res://scripts/grid_detector.gd")
+const LegacyCatalogV1Script = preload("res://scripts/legacy_catalog_v1.gd")
 
-var assets_by_id := {}
-var sprite_textures := {}
+var piece_textures := {}
+var embedded_images := {}
 var pieces: Array = []
 var selected_id := -1
 var next_id := 1
@@ -108,18 +112,6 @@ func _context_row_style(background: Color, border: Color) -> StyleBoxFlat:
 	style.content_margin_left = 8
 	style.content_margin_right = 8
 	return style
-
-func set_catalog(assets: Array) -> void:
-	assets_by_id.clear()
-	sprite_textures.clear()
-	for asset in assets:
-		assets_by_id[asset["id"]] = asset
-		var sprite_path := str(asset.get("sprite", ""))
-		if not sprite_path.is_empty():
-			var texture := load(sprite_path) as Texture2D
-			if texture != null:
-				sprite_textures[asset["id"]] = texture
-	queue_redraw()
 
 func set_background(path: String) -> Dictionary:
 	var loaded := Image.load_from_file(path)
@@ -205,16 +197,6 @@ func manual_cell_aspect_ratio() -> float:
 	var map_rect := _landscape_rect()
 	var cell_size := Vector2(map_rect.size.x / manual_grid_cells.x, map_rect.size.y / manual_grid_cells.y)
 	return cell_size.x / maxf(cell_size.y, 0.001)
-
-func drag_preview_size_for_asset(asset_id: String) -> Vector2:
-	var asset = assets_by_id.get(asset_id, null)
-	if asset == null:
-		return Vector2(96, 82)
-	var footprint: Vector2i = asset["footprint"]
-	var cell_size := _cell_size() * zoom_level
-	var footprint_size := Vector2(footprint) * cell_size
-	var inset := minf(cell_size.x, cell_size.y) * 0.025
-	return (footprint_size - Vector2.ONE * inset * 2.0).max(Vector2.ONE)
 
 func selection_outline_width() -> float:
 	var cell_size := _cell_size()
@@ -380,39 +362,43 @@ func _clamp_view_offset() -> void:
 	view_offset.y = clampf(view_offset.y, size.y * (1.0 - zoom_level), 0.0)
 
 func _can_drop_data(at_position: Vector2, data: Variant) -> bool:
-	if not data is Dictionary or data.get("type", "") != "asset":
+	if not data is Dictionary or data.get("type", "") != "catalog_entry":
 		return false
-	var asset_id := str(data.get("asset_id", ""))
-	if not assets_by_id.has(asset_id):
+	var entry = data.get("entry", null)
+	if not entry is Dictionary or not entry.get("footprint", null) is Vector2i:
 		return false
-	var footprint: Vector2i = assets_by_id[asset_id]["footprint"]
+	var footprint: Vector2i = entry["footprint"]
+	if footprint.x > _active_map_cells().x or footprint.y > _active_map_cells().y:
+		return false
 	var target := _drop_target_cell(at_position, footprint)
 	return _can_occupy(target, footprint)
 
 func _drop_data(at_position: Vector2, data: Variant) -> void:
-	var asset_id := str(data.get("asset_id", ""))
-	if not assets_by_id.has(asset_id):
+	var entry = data.get("entry", null)
+	if not entry is Dictionary or not entry.get("footprint", null) is Vector2i:
 		return
-	var footprint: Vector2i = assets_by_id[asset_id]["footprint"]
+	var footprint: Vector2i = entry["footprint"]
+	if footprint.x > _active_map_cells().x or footprint.y > _active_map_cells().y:
+		action_rejected.emit("That piece is larger than the current grid")
+		return
 	var cell := _drop_target_cell(at_position, footprint)
-	_place_piece(asset_id, cell)
+	_place_piece(entry, cell)
 
 func _drop_target_cell(at_position: Vector2, footprint: Vector2i) -> Vector2i:
 	var centered := _local_to_cell(at_position) - Vector2i(floori(footprint.x / 2.0), floori(footprint.y / 2.0))
 	return _clamp_cell(centered, footprint)
 
-func _place_piece(asset_id: String, cell: Vector2i) -> void:
-	if not assets_by_id.has(asset_id):
-		return
-	var asset = assets_by_id[asset_id]
-	var target_cell := _clamp_cell(cell, asset["footprint"])
-	if not _can_occupy(target_cell, asset["footprint"]):
+func _place_piece(entry: Dictionary, cell: Vector2i) -> void:
+	var snapshot := _normalized_entry_snapshot(entry)
+	var footprint: Vector2i = snapshot["footprint"]
+	var target_cell := _clamp_cell(cell, footprint)
+	if not _can_occupy(target_cell, footprint):
 		action_rejected.emit("That space is already occupied")
 		return
 	_push_undo()
 	var piece := {
 		"instance_id": next_id,
-		"asset_id": asset_id,
+		"entry": snapshot,
 		"cell": target_cell,
 		"rotation": 0,
 		"mirrored": false,
@@ -463,16 +449,20 @@ func rotate_selected(direction: int = 1) -> void:
 	var selected = get_selected_piece()
 	if selected == null:
 		return
-	_push_undo()
 	var previous_rotation := int(selected["rotation"])
-	selected["rotation"] = posmod(previous_rotation + 90 * signi(direction), 360)
-	var target_cell := _clamp_cell(selected["cell"], _piece_footprint(selected))
-	if not _can_occupy(target_cell, _piece_footprint(selected), selected_id):
-		selected["rotation"] = previous_rotation
-		undo_stack.pop_back()
-		action_rejected.emit("The rotated object would overlap another object")
-		queue_redraw()
+	var next_rotation := posmod(previous_rotation + 90 * signi(direction), 360)
+	var footprint: Vector2i = selected["entry"].get("footprint", Vector2i.ONE)
+	if next_rotation % 180 != 0:
+		footprint = Vector2i(footprint.y, footprint.x)
+	if footprint.x > _active_map_cells().x or footprint.y > _active_map_cells().y:
+		action_rejected.emit("The rotated object would fall outside the grid")
 		return
+	var target_cell := _clamp_cell(selected["cell"], footprint)
+	if not _can_occupy(target_cell, footprint, selected_id):
+		action_rejected.emit("The rotated object would overlap another object")
+		return
+	_push_undo()
+	selected["rotation"] = next_rotation
 	selected["cell"] = target_cell
 	selection_changed.emit(selected)
 	state_changed.emit()
@@ -494,11 +484,6 @@ func get_selected_piece():
 			return piece
 	return null
 
-func get_asset_for_piece(piece):
-	if piece != null and assets_by_id.has(piece["asset_id"]):
-		return assets_by_id[piece["asset_id"]]
-	return null
-
 func undo() -> void:
 	if undo_stack.is_empty():
 		return
@@ -518,11 +503,13 @@ func can_redo() -> bool:
 	return not redo_stack.is_empty()
 
 func clear_map() -> void:
-	if pieces.is_empty():
-		return
-	_push_undo()
 	pieces.clear()
+	embedded_images.clear()
+	piece_textures.clear()
+	undo_stack.clear()
+	redo_stack.clear()
 	selected_id = -1
+	next_id = 1
 	selection_changed.emit(null)
 	state_changed.emit()
 	queue_redraw()
@@ -530,9 +517,18 @@ func clear_map() -> void:
 func serialize_state() -> Dictionary:
 	var serialized: Array = []
 	for piece in pieces:
+		var entry: Dictionary = piece.get("entry", _missing_entry_snapshot("missing"))
+		var footprint: Vector2i = entry.get("footprint", Vector2i.ONE)
 		serialized.append({
 			"instance_id": piece["instance_id"],
-			"asset_id": piece["asset_id"],
+			"entry": {
+				"id": str(entry.get("id", "missing")),
+				"name": str(entry.get("name", "Missing catalog entry")),
+				"group_id": str(entry.get("group_id", "")),
+				"footprint_width": footprint.x,
+				"footprint_height": footprint.y,
+				"image_path": str(entry.get("image_path", ""))
+			},
 			"cell_x": piece["cell"].x,
 			"cell_y": piece["cell"].y,
 			"rotation": piece["rotation"],
@@ -540,7 +536,7 @@ func serialize_state() -> Dictionary:
 			"layer": piece["layer"]
 		})
 	return {
-		"version": 1,
+		"version": 2,
 		"grid_mode": grid_mode,
 		"grid_opacity": grid_opacity,
 		"grid_color": grid_color.to_html(false),
@@ -559,8 +555,64 @@ func serialize_state() -> Dictionary:
 		"pieces": serialized
 	}
 
-func load_state(data: Dictionary) -> void:
+func serialize_portable_state() -> Dictionary:
+	var data := serialize_state()
+	var images := {}
+	var snapshots := {}
+	var total_bytes := 0
+	for piece in pieces:
+		var entry: Dictionary = piece.get("entry", {})
+		var path := str(entry.get("image_path", ""))
+		if path.is_empty() or images.has(path):
+			continue
+		var bytes := PackedByteArray()
+		if piece_textures.has(path) and piece_textures[path] != null:
+			bytes = (piece_textures[path] as Texture2D).get_image().save_png_to_buffer()
+		if bytes.is_empty():
+			bytes = embedded_images.get(path, PackedByteArray())
+		if bytes.is_empty():
+			if path.begins_with("res://"):
+				var texture := load(path) as Texture2D
+				if texture != null:
+					bytes = texture.get_image().save_png_to_buffer()
+			elif FileAccess.file_exists(path):
+				bytes = FileAccess.get_file_as_bytes(path)
+		if bytes.is_empty():
+			return {"error": "Could not include image: %s" % path}
+		var image := Image.new()
+		if image.load_png_from_buffer(bytes) != OK or image.get_width() > MAX_EMBEDDED_IMAGE_DIMENSION or image.get_height() > MAX_EMBEDDED_IMAGE_DIMENSION:
+			return {"error": "Image is not a readable PNG within 4096×4096 pixels: %s" % path}
+		while bytes.size() > MAX_EMBEDDED_IMAGE_BYTES:
+			if image.get_width() == 1 and image.get_height() == 1:
+				return {"error": "Image exceeds the 2 MiB map limit: %s" % path}
+			image.resize(maxi(1, image.get_width() / 2), maxi(1, image.get_height() / 2), Image.INTERPOLATE_NEAREST)
+			bytes = image.save_png_to_buffer()
+			if bytes.is_empty():
+				return {"error": "Could not reduce image: %s" % path}
+		total_bytes += bytes.size()
+		if total_bytes > MAX_EMBEDDED_IMAGES_BYTES:
+			return {"error": "Images exceed the 32 MiB map limit."}
+		snapshots[path] = bytes
+		images[path] = Marshalls.raw_to_base64(bytes)
+	data["version"] = 3
+	data["images"] = images
+	return {"data": data, "images": snapshots}
+
+func commit_portable_images(images: Dictionary) -> void:
+	embedded_images = images.duplicate(true)
+	piece_textures.clear()
+	queue_redraw()
+
+func load_state(data: Dictionary) -> String:
+	var validation_error := _validate_saved_state(data)
+	if not validation_error.is_empty():
+		return validation_error
 	reset_zoom()
+	embedded_images.clear()
+	piece_textures.clear()
+	if int(data["version"]) == 3:
+		for path in data["images"]:
+			embedded_images[path] = Marshalls.base64_to_raw(data["images"][path])
 	pieces.clear()
 	selected_id = -1
 	next_id = 1
@@ -595,26 +647,128 @@ func load_state(data: Dictionary) -> void:
 	elif grid_mode == GRID_DETECTED:
 		grid_mode = GRID_SQUARE
 	for item in data.get("pieces", []):
-		if not assets_by_id.has(item.get("asset_id", "")):
+		if not item is Dictionary:
 			continue
+		var entry := _entry_snapshot_from_saved_piece(item)
 		var piece := {
 			"instance_id": int(item.get("instance_id", next_id)),
-			"asset_id": str(item.get("asset_id", "")),
+			"entry": entry,
 			"cell": Vector2i(int(item.get("cell_x", 0)), int(item.get("cell_y", 0))),
 			"rotation": int(item.get("rotation", 0)),
 			"mirrored": bool(item.get("mirrored", false)),
 			"layer": int(item.get("layer", pieces.size()))
 		}
-		if _can_occupy(piece["cell"], _piece_footprint(piece)):
-			pieces.append(piece)
-			next_id = maxi(next_id, int(piece["instance_id"]) + 1)
+		pieces.append(piece)
+		next_id = maxi(next_id, int(piece["instance_id"]) + 1)
 	undo_stack.clear()
 	redo_stack.clear()
 	selection_changed.emit(null)
 	state_changed.emit()
 	queue_redraw()
+	return ""
+
+func _validate_saved_state(data: Dictionary) -> String:
+	if not data.has("version") or not _saved_integer(data["version"]) or int(data["version"]) not in [1, 2, 3]:
+		return "Unsupported map version."
+	if not data.get("pieces") is Array:
+		return "pieces must be an array."
+	if int(data["version"]) == 3:
+		if not data.get("images") is Dictionary:
+			return "images must be an object."
+		var total_bytes := 0
+		for path in data["images"]:
+			if not path is String or not data["images"][path] is String:
+				return "images must map paths to PNG data."
+			var encoded: String = data["images"][path]
+			if encoded.length() > ceili(float(MAX_EMBEDDED_IMAGE_BYTES) / 3.0) * 4:
+				return "Embedded image exceeds the 2 MiB limit."
+			var bytes := Marshalls.base64_to_raw(encoded)
+			if bytes.is_empty() or bytes.size() > MAX_EMBEDDED_IMAGE_BYTES or Marshalls.raw_to_base64(bytes) != encoded:
+				return "Embedded image data is invalid."
+			total_bytes += bytes.size()
+			if total_bytes > MAX_EMBEDDED_IMAGES_BYTES:
+				return "Embedded images exceed the 32 MiB limit."
+			var image := Image.new()
+			if image.load_png_from_buffer(bytes) != OK or image.get_width() > MAX_EMBEDDED_IMAGE_DIMENSION or image.get_height() > MAX_EMBEDDED_IMAGE_DIMENSION:
+				return "Embedded image is not a readable PNG within 4096×4096 pixels."
+	for key in ["grid_mode", "manual_grid_columns", "manual_grid_rows", "detected_grid_cells_x", "detected_grid_cells_y"]:
+		if data.has(key) and not _saved_integer(data[key]):
+			return "%s must be a whole number." % key
+	for key in ["grid_opacity", "detected_grid_origin_x", "detected_grid_origin_y", "detected_grid_spacing_x", "detected_grid_spacing_y", "detected_grid_end_x", "detected_grid_end_y", "detected_grid_confidence"]:
+		if data.has(key) and not _saved_number(data[key]):
+			return "%s must be a finite number." % key
+	if data.has("grid_color") and not data["grid_color"] is String:
+		return "grid_color must be a string."
+	if data.has("background_path") and not data["background_path"] is String:
+		return "background_path must be a string."
+	var columns := clampi(int(data.get("manual_grid_columns", DEFAULT_MAP_CELLS.x)), MIN_MANUAL_GRID_SIZE, MAX_MANUAL_GRID_SIZE)
+	var rows := clampi(int(data.get("manual_grid_rows", DEFAULT_MAP_CELLS.y)), MIN_MANUAL_GRID_SIZE, MAX_MANUAL_GRID_SIZE)
+	var detected_columns := int(data.get("detected_grid_cells_x", 0))
+	var detected_rows := int(data.get("detected_grid_cells_y", 0))
+	var detected_valid := detected_columns > 0 and detected_rows > 0 \
+		and float(data.get("detected_grid_spacing_x", 0.0)) > 0.0 \
+		and float(data.get("detected_grid_spacing_y", 0.0)) > 0.0
+	var bounds := Vector2i(detected_columns, detected_rows) if detected_valid else Vector2i(columns, rows)
+	var used_ids := {}
+	var occupied: Array[Rect2i] = []
+	for index in range(data["pieces"].size()):
+		var item = data["pieces"][index]
+		var location := "pieces[%d]" % index
+		if not item is Dictionary:
+			return "%s must be an object." % location
+		for key in ["instance_id", "cell_x", "cell_y"]:
+			if not item.has(key) or not _saved_integer(item[key]):
+				return "%s.%s must be a whole number." % [location, key]
+		var instance_id := int(item["instance_id"])
+		if instance_id < 1 or used_ids.has(instance_id):
+			return "%s.instance_id must be positive and unique." % location
+		used_ids[instance_id] = true
+		for key in ["rotation", "layer"]:
+			if item.has(key) and not _saved_integer(item[key]):
+				return "%s.%s must be a whole number." % [location, key]
+		if item.has("mirrored") and not item["mirrored"] is bool:
+			return "%s.mirrored must be a boolean." % location
+		var footprint := Vector2i.ONE
+		if int(data["version"]) >= 2:
+			var entry = item.get("entry", null)
+			if not entry is Dictionary:
+				return "%s.entry must be an object." % location
+			for key in ["id", "name", "group_id", "image_path"]:
+				if not entry.has(key) or not entry[key] is String:
+					return "%s.entry.%s must be a string." % [location, key]
+			if int(data["version"]) == 3 and not entry["image_path"].is_empty() and not data["images"].has(entry["image_path"]):
+				return "%s.entry image is missing from the map." % location
+			for key in ["footprint_width", "footprint_height"]:
+				if not entry.has(key) or not _saved_integer(entry[key]):
+					return "%s.entry.%s must be a whole number." % [location, key]
+			footprint = Vector2i(int(entry["footprint_width"]), int(entry["footprint_height"]))
+			if footprint.x < 1 or footprint.y < 1 or footprint.x > MAX_MANUAL_GRID_SIZE or footprint.y > MAX_MANUAL_GRID_SIZE:
+				return "%s.entry footprint must be between 1 and 100." % location
+		else:
+			if not item.has("asset_id") or not item["asset_id"] is String or item["asset_id"].is_empty():
+				return "%s.asset_id must be a non-empty string." % location
+			footprint = _entry_snapshot_from_saved_piece(item)["footprint"]
+		if int(item.get("rotation", 0)) % 180 != 0:
+			footprint = Vector2i(footprint.y, footprint.x)
+		var cell := Vector2i(int(item["cell_x"]), int(item["cell_y"]))
+		if cell.x < 0 or cell.y < 0 or cell.x + footprint.x > bounds.x or cell.y + footprint.y > bounds.y:
+			return "%s is outside the grid." % location
+		var rectangle := Rect2i(cell, footprint)
+		for previous in occupied:
+			if rectangle.intersects(previous):
+				return "%s overlaps another piece." % location
+		occupied.append(rectangle)
+	return ""
+
+func _saved_integer(value) -> bool:
+	return value is int or (value is float and is_finite(value) and value == floorf(value))
+
+func _saved_number(value) -> bool:
+	return (value is int or value is float) and is_finite(float(value))
 
 func export_visible_png(path: String) -> Error:
+	if DisplayServer.get_name() == "headless":
+		return ERR_UNAVAILABLE
 	var export_size := Vector2i(size)
 	if background_texture != null:
 		export_size = Vector2i(background_texture.get_size())
@@ -632,9 +786,10 @@ func export_visible_png(path: String) -> Error:
 	export_viewport.add_child(export_canvas)
 	export_canvas.custom_minimum_size = Vector2.ZERO
 	export_canvas.size = Vector2(export_size)
-	export_canvas.set_catalog(assets_by_id.values())
 	export_canvas.load_state(serialize_state())
-	# Unsaved/in-memory textures still need to be available to the isolated renderer.
+	export_canvas.embedded_images = embedded_images.duplicate(true)
+	# Match the images currently displayed, even if their source files changed.
+	export_canvas.piece_textures = piece_textures.duplicate()
 	export_canvas.background_texture = background_texture
 	export_canvas.selected_id = -1
 	export_canvas.zoom_level = 1.0
@@ -677,6 +832,10 @@ func _piece_at(cell: Vector2i):
 	return null
 
 func _can_occupy(cell: Vector2i, footprint: Vector2i, ignored_instance_id: int = -1) -> bool:
+	var map_cells := _active_map_cells()
+	if footprint.x < 1 or footprint.y < 1 or cell.x < 0 or cell.y < 0 \
+			or cell.x + footprint.x > map_cells.x or cell.y + footprint.y > map_cells.y:
+		return false
 	var target := Rect2i(cell, footprint)
 	for piece in pieces:
 		if int(piece["instance_id"]) == ignored_instance_id:
@@ -701,11 +860,53 @@ func _find_nearest_free_cell(preferred: Vector2i, footprint: Vector2i, ignored_i
 					return candidate
 	return Vector2i(-1, -1)
 
+
+func _entry_snapshot_from_saved_piece(item: Dictionary) -> Dictionary:
+	var saved_entry = item.get("entry", null)
+	if saved_entry is Dictionary:
+		var footprint := Vector2i(
+			clampi(int(saved_entry.get("footprint_width", 1)), 1, MAX_MANUAL_GRID_SIZE),
+			clampi(int(saved_entry.get("footprint_height", 1)), 1, MAX_MANUAL_GRID_SIZE)
+		)
+		return {
+			"id": str(saved_entry.get("id", "missing")),
+			"name": str(saved_entry.get("name", "Missing catalog entry")),
+			"group_id": str(saved_entry.get("group_id", "")),
+			"footprint": footprint,
+			"image_path": str(saved_entry.get("image_path", ""))
+		}
+	var legacy_id := str(item.get("asset_id", "missing"))
+	var legacy_entry: Dictionary = LegacyCatalogV1Script.entry_snapshot(legacy_id)
+	if not legacy_entry.is_empty():
+		return legacy_entry
+	return _missing_entry_snapshot(legacy_id)
+
+
+func _normalized_entry_snapshot(entry: Dictionary) -> Dictionary:
+	return {
+		"id": str(entry.get("id", "missing")),
+		"name": str(entry.get("name", "Missing catalog entry")),
+		"group_id": str(entry.get("group_id", "")),
+		"footprint": entry.get("footprint", Vector2i.ONE),
+		"image_path": str(entry.get("image_path", ""))
+	}
+
+
+func _missing_entry_snapshot(entry_id: String) -> Dictionary:
+	return {
+		"id": entry_id,
+		"name": "Missing catalog entry",
+		"group_id": "",
+		"footprint": Vector2i.ONE,
+		"image_path": ""
+	}
+
+
 func _piece_footprint(piece) -> Vector2i:
-	var asset = assets_by_id.get(piece["asset_id"], null)
-	if asset == null:
+	var entry = piece.get("entry", null)
+	if not entry is Dictionary:
 		return Vector2i.ONE
-	var footprint: Vector2i = asset["footprint"]
+	var footprint: Vector2i = entry.get("footprint", Vector2i.ONE)
 	if int(piece.get("rotation", 0)) % 180 != 0:
 		return Vector2i(footprint.y, footprint.x)
 	return footprint
@@ -817,18 +1018,19 @@ func _draw_square_grid() -> void:
 		draw_rect(Rect2(map_rect.position.x, py, map_rect.size.x, line_width), color, true)
 
 func _draw_piece(piece) -> void:
-	var asset = assets_by_id.get(piece["asset_id"], null)
-	if asset == null:
+	var entry = piece.get("entry", null)
+	if not entry is Dictionary:
 		return
 	var cell_size := _cell_size()
 	var footprint := _piece_footprint(piece)
 	var rect := Rect2(_grid_origin_pixels() + Vector2(piece["cell"]) * cell_size, Vector2(footprint) * cell_size)
 	var inset := minf(cell_size.x, cell_size.y) * 0.025
 	var icon_rect := rect.grow(-inset)
-	if sprite_textures.has(piece["asset_id"]):
-		_draw_sprite_texture(icon_rect, sprite_textures[piece["asset_id"]], int(piece["rotation"]), bool(piece.get("mirrored", false)))
+	var texture := _texture_for_entry(entry)
+	if texture != null:
+		_draw_sprite_texture(icon_rect, texture, int(piece["rotation"]), bool(piece.get("mirrored", false)))
 	else:
-		_draw_pixel_icon(icon_rect, asset)
+		_draw_missing_image(icon_rect)
 	if piece["instance_id"] == selected_id:
 		var outline_width := selection_outline_width()
 		draw_rect(rect.grow(-outline_width * 0.67), Color("f0c96b"), false, outline_width)
@@ -847,45 +1049,34 @@ func _draw_sprite_texture(rect: Rect2, texture: Texture2D, piece_rotation: int, 
 	draw_texture_rect(texture, Rect2(-draw_size * 0.5, draw_size), false)
 	draw_set_transform(view_offset, 0.0, Vector2.ONE * zoom_level)
 
-func _draw_pixel_icon(rect: Rect2, asset: Dictionary) -> void:
-	var kind: String = asset["kind"]
-	var color: Color = asset["color"]
-	var unit := maxf(2.0, floorf(minf(rect.size.x, rect.size.y) / 10.0))
-	var center := rect.get_center()
-	if kind in ["hero", "goblin", "skeleton"]:
-		var skin := Color("d9b07c")
-		if kind == "goblin": skin = Color("85a84d")
-		if kind == "skeleton": skin = Color("ddd7bd")
-		draw_rect(Rect2(center + Vector2(-2 * unit, -4 * unit), Vector2(4, 3) * unit), skin)
-		draw_rect(Rect2(center + Vector2(-2.5 * unit, -unit), Vector2(5, 4) * unit), color)
-		draw_rect(Rect2(center + Vector2(-2.5 * unit, 3 * unit), Vector2(2, 2) * unit), Color("25282b"))
-		draw_rect(Rect2(center + Vector2(0.5 * unit, 3 * unit), Vector2(2, 2) * unit), Color("25282b"))
-		draw_rect(Rect2(center + Vector2(-3.5 * unit, -0.5 * unit), Vector2(unit, 3 * unit)), skin)
-		draw_rect(Rect2(center + Vector2(2.5 * unit, -0.5 * unit), Vector2(unit, 3 * unit)), skin)
-	elif kind == "wolf":
-		draw_rect(Rect2(center + Vector2(-4 * unit, -2 * unit), Vector2(7, 4) * unit), color)
-		draw_rect(Rect2(center + Vector2(2 * unit, -3 * unit), Vector2(3, 3) * unit), color.lightened(0.12))
-		draw_rect(Rect2(center + Vector2(-3 * unit, 2 * unit), Vector2(unit, 2 * unit)), Color("2c2d2d"))
-		draw_rect(Rect2(center + Vector2(2 * unit, 2 * unit), Vector2(unit, 2 * unit)), Color("2c2d2d"))
-	elif kind == "tree":
-		draw_rect(Rect2(center + Vector2(-unit, unit), Vector2(2, 4) * unit), Color("68462f"))
-		for offset in [Vector2(-2, -2), Vector2(1, -3), Vector2(0, 0)]:
-			var highlight := 0.08 if offset.x > 0 else 0.02
-			draw_rect(Rect2(center + offset * unit, Vector2(4, 4) * unit), color.lightened(highlight))
-	elif kind == "rock":
-		draw_colored_polygon(PackedVector2Array([
-			center + Vector2(-4, 3) * unit, center + Vector2(-3, -2) * unit,
-			center + Vector2(0, -4) * unit, center + Vector2(4, -2) * unit,
-			center + Vector2(4, 3) * unit
-		]), color)
-	elif kind == "chest":
-		draw_rect(Rect2(center + Vector2(-4, -2) * unit, Vector2(8, 5) * unit), color)
-		draw_rect(Rect2(center + Vector2(-4, -2) * unit, Vector2(8, unit)), Color("d3a34f"))
-		draw_rect(Rect2(center + Vector2(-unit, -unit) * unit, Vector2(2, 3) * unit), Color("e0bd62"))
-	elif kind == "fire":
-		draw_rect(Rect2(center + Vector2(-4, 2) * unit, Vector2(8, unit)), Color("6c4631"))
-		draw_colored_polygon(PackedVector2Array([center + Vector2(-2, 2) * unit, center + Vector2(0, -5) * unit, center + Vector2(3, 2) * unit]), Color("e56c2f"))
-		draw_colored_polygon(PackedVector2Array([center + Vector2(-unit, 2 * unit), center + Vector2(unit, -2 * unit), center + Vector2(2 * unit, 2 * unit)]), Color("f0c96b"))
+func _texture_for_entry(entry: Dictionary) -> Texture2D:
+	var path := str(entry.get("image_path", ""))
+	if path.is_empty():
+		return null
+	if piece_textures.has(path):
+		return piece_textures[path]
+	var texture: Texture2D
+	if embedded_images.has(path):
+		var image := Image.new()
+		if image.load_png_from_buffer(embedded_images[path]) == OK:
+			texture = ImageTexture.create_from_image(image)
+	elif path.begins_with("res://") or path.begins_with("user://"):
+		texture = load(path) as Texture2D
 	else:
-		draw_rect(rect.grow(-unit), color)
-		draw_rect(rect.grow(-unit * 2.0), color.lightened(0.18), false, unit)
+		var image := Image.load_from_file(path)
+		if not image.is_empty():
+			texture = ImageTexture.create_from_image(image)
+	piece_textures[path] = texture
+	return texture
+
+
+func refresh_piece_images() -> void:
+	piece_textures.clear()
+	queue_redraw()
+
+
+func _draw_missing_image(rect: Rect2) -> void:
+	draw_rect(rect, Color("352f3b"))
+	var stroke := maxf(2.0, minf(rect.size.x, rect.size.y) * 0.05)
+	draw_line(rect.position, rect.end, Color("d67a73"), stroke)
+	draw_line(Vector2(rect.end.x, rect.position.y), Vector2(rect.position.x, rect.end.y), Color("d67a73"), stroke)
