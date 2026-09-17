@@ -15,6 +15,8 @@ const MAX_CATALOG_BYTES := 5 * 1024 * 1024
 const MAX_IMAGE_BYTES := 20 * 1024 * 1024
 const MAX_IMAGE_DIMENSION := 4096
 const MAX_FOOTPRINT := 100
+const COMPACT_WIDTH := 280
+const WIDE_WIDTH := 400
 const VALID_ID_PATTERN := "^[a-z0-9_-]+$"
 const CHEVRON_UP_SVG := "<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'><path d='M2 8L6 4L10 8' stroke='#F0C96B' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/></svg>"
 const CHEVRON_DOWN_SVG := "<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'><path d='M2 4L6 8L10 4' stroke='#F0C96B' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/></svg>"
@@ -33,8 +35,12 @@ var _entry_buttons := {}
 var _has_valid_catalog := false
 var _using_fallback := false
 var _built := false
+var _card_columns := 2
 
 var _search: LineEdit
+var _header: VBoxContainer
+var _header_row: HBoxContainer
+var _header_actions: HBoxContainer
 var _scroll: ScrollContainer
 var _scroll_content: MarginContainer
 var _groups_container: VBoxContainer
@@ -88,11 +94,27 @@ func is_using_fallback() -> bool:
 	return _using_fallback
 
 
+func set_card_columns(columns: int) -> void:
+	assert(columns == 2 or columns == 3)
+	_ensure_interface()
+	if columns == _card_columns:
+		return
+	_card_columns = columns
+	_header_actions.get_parent().remove_child(_header_actions)
+	if columns == 3:
+		_header_row.add_child(_header_actions)
+	else:
+		_header.add_child(_header_actions)
+	custom_minimum_size.x = WIDE_WIDTH if columns == 3 else COMPACT_WIDTH
+	for controls in _group_views.values():
+		controls["grid"].columns = columns
+
+
 func _ensure_interface() -> void:
 	if _built:
 		return
 	_built = true
-	custom_minimum_size.x = 276
+	custom_minimum_size.x = COMPACT_WIDTH
 	add_theme_stylebox_override("panel", _panel_style(Color("182128"), 0, 1, 0, 0))
 	_chevron_up_icon = _svg_icon(CHEVRON_UP_SVG)
 	_chevron_down_icon = _svg_icon(CHEVRON_DOWN_SVG)
@@ -101,24 +123,31 @@ func _ensure_interface() -> void:
 	column.add_theme_constant_override("separation", 8)
 	add_child(column)
 
-	var header := HBoxContainer.new()
-	header.add_theme_constant_override("separation", 6)
-	column.add_child(header)
+	_header = VBoxContainer.new()
+	_header.add_theme_constant_override("separation", 6)
+	column.add_child(_header)
+	_header_row = HBoxContainer.new()
+	_header_row.add_theme_constant_override("separation", 6)
+	_header.add_child(_header_row)
 	var title := Label.new()
 	title.text = "CAST & PROPS"
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title.add_theme_font_size_override("font_size", 17)
-	header.add_child(title)
+	_header_row.add_child(title)
+	_header_actions = HBoxContainer.new()
+	_header_actions.add_theme_constant_override("separation", 6)
+	_header_actions.size_flags_horizontal = Control.SIZE_SHRINK_END
+	_header.add_child(_header_actions)
 	var open_button := Button.new()
 	open_button.text = "OPEN FOLDER"
 	open_button.tooltip_text = "Open the editable catalog and images"
 	open_button.pressed.connect(_open_catalog_folder)
-	header.add_child(open_button)
+	_header_actions.add_child(open_button)
 	var reload_button := Button.new()
 	reload_button.text = "RELOAD"
 	reload_button.tooltip_text = "Validate and reload catalog.json"
 	reload_button.pressed.connect(_on_reload_pressed)
-	header.add_child(reload_button)
+	_header_actions.add_child(reload_button)
 
 	_search = LineEdit.new()
 	_search.placeholder_text = "Search cast and props"
@@ -443,7 +472,7 @@ func _rebuild_cards() -> void:
 		var heading := _category_heading(str(group["name"]))
 		section.add_child(heading)
 		var grid := GridContainer.new()
-		grid.columns = 2
+		grid.columns = _card_columns
 		grid.add_theme_constant_override("h_separation", 6)
 		grid.add_theme_constant_override("v_separation", 6)
 		section.add_child(grid)

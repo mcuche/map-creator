@@ -3,15 +3,28 @@ extends Control
 # THESIS: The map is a stage, not a document inside generic editor chrome; the wide canvas owns the workspace.
 # OWN-WORLD: Stage black panels, cobalt active states, cue-gold primary actions, dusty-rose warnings, hairline seams, and cast/scene language.
 # STORY: Pick from Cast & Props, place fixed-footprint pieces on the stage, adjust order and grid, save locally, then export PNG.
-# FIRST VIEWPORT: Permanent 276px Cast & Props rail left, dominant painted stage center, compact 260px Stage Controls right, Export PNG top-right.
+# FIRST VIEWPORT: Responsive Cast & Props rail left, dominant painted stage center, Stage Controls right, Export PNG top-right.
 # FORM: Combined Scene & Cue layout approved from scene-cue-layout-2.png; direction seed 700e5698.
 # FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
 
 const MapCanvasScript = preload("res://scripts/map_canvas.gd")
 const CastPropsLibraryScript = preload("res://scripts/cast_props_library.gd")
+const STAGE_CONTROLS_WIDTH := 260
+const STAGE_MINIMUM_WIDTH := 720 + 16
+const BODY_SEPARATORS_WIDTH := 2
+const DISPLAY_SETTINGS_PATH := "user://display_settings.cfg"
+const SCALE_CHOICES := [100, 125, 150, 200]
+const MINIMUM_LOGICAL_SIZE := Vector2i(1280, 720)
 
 var map_canvas: BattleMapCanvas
 var cast_props_library: CastPropsLibrary
+var stage_controls: Control
+var stage_controls_scroll: ScrollContainer
+var ui_scale_select: OptionButton
+var ui_scale_effective: Label
+var preferred_ui_scale := 0 # 0 means Auto.
+var effective_ui_scale := 100
+var _current_screen := -1
 var selection_name: Label
 var piece_action_buttons: Array[Button] = []
 var grid_label: Label
@@ -53,6 +66,11 @@ var palette := {
 func _ready() -> void:
 	theme = _build_theme()
 	_build_interface()
+	_load_display_settings()
+	get_window().size_changed.connect(_update_ui_scale)
+	_update_ui_scale()
+	resized.connect(_update_responsive_layout)
+	_update_responsive_layout.call_deferred()
 	_build_dialogs()
 	map_canvas.selection_changed.connect(_on_selection_changed)
 	map_canvas.state_changed.connect(_refresh_actions)
@@ -62,6 +80,11 @@ func _ready() -> void:
 	map_canvas.resized.connect(_update_grid_shape_warning)
 	_sync_manual_grid_inputs()
 	cast_props_library.initialize()
+
+
+func _process(_delta: float) -> void:
+	if get_window().current_screen != _current_screen:
+		_update_ui_scale()
 
 func _build_interface() -> void:
 	var shell := VBoxContainer.new()
@@ -141,7 +164,8 @@ func _build_interface() -> void:
 	map_canvas.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	map_canvas.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	stage_frame.add_child(map_canvas)
-	body.add_child(_build_cue_book())
+	stage_controls = _build_cue_book()
+	body.add_child(stage_controls)
 
 	var status := PanelContainer.new()
 	status.custom_minimum_size.y = 32
@@ -159,27 +183,95 @@ func _build_library() -> Control:
 	return cast_props_library
 
 
+func _update_responsive_layout() -> void:
+	var wide_minimum := CastPropsLibrary.WIDE_WIDTH + stage_controls.get_combined_minimum_size().x + STAGE_MINIMUM_WIDTH + BODY_SEPARATORS_WIDTH
+	cast_props_library.set_card_columns(3 if size.x >= wide_minimum else 2)
+
+
+func _load_display_settings() -> void:
+	preferred_ui_scale = 0
+	var config := ConfigFile.new()
+	if config.load(DISPLAY_SETTINGS_PATH) == OK:
+		var saved = config.get_value("display", "ui_scale", 0)
+		if saved is int and (saved == 0 or saved in SCALE_CHOICES):
+			preferred_ui_scale = saved
+	ui_scale_select.select(0 if preferred_ui_scale == 0 else SCALE_CHOICES.find(preferred_ui_scale) + 1)
+
+
+func _on_ui_scale_selected(index: int) -> void:
+	preferred_ui_scale = 0 if index == 0 else SCALE_CHOICES[index - 1]
+	var config := ConfigFile.new()
+	config.set_value("display", "ui_scale", preferred_ui_scale)
+	if config.save(DISPLAY_SETTINGS_PATH) != OK:
+		_update_status("Could not save UI scale preference")
+	_update_ui_scale()
+
+
+func _auto_ui_scale(monitor_width: int) -> int:
+	if OS.get_name() == "Windows":
+		if monitor_width >= 3840:
+			return 200
+		if monitor_width >= 3200:
+			return 150
+		if monitor_width >= 2560:
+			return 125
+		return 100
+	var display_scale := DisplayServer.screen_get_scale(get_window().current_screen) * 100.0
+	var result := 100
+	for choice in SCALE_CHOICES:
+		if choice <= display_scale:
+			result = choice
+	return result
+
+
+func _effective_ui_scale(preferred: int, window_size: Vector2i, monitor_width: int) -> int:
+	var requested := _auto_ui_scale(monitor_width) if preferred == 0 else preferred
+	var result := 100
+	for choice in SCALE_CHOICES:
+		if choice <= requested and window_size.x >= MINIMUM_LOGICAL_SIZE.x * choice / 100.0 and window_size.y >= MINIMUM_LOGICAL_SIZE.y * choice / 100.0:
+			result = choice
+	return result
+
+
+func _update_ui_scale() -> void:
+	var window := get_window()
+	_current_screen = window.current_screen
+	var monitor_width := DisplayServer.screen_get_size(_current_screen).x
+	effective_ui_scale = _effective_ui_scale(preferred_ui_scale, window.size, monitor_width)
+	var factor := effective_ui_scale / 100.0
+	if not is_equal_approx(window.content_scale_factor, factor):
+		window.content_scale_factor = factor
+	ui_scale_effective.text = "Using %d%% in this window" % effective_ui_scale
+	ui_scale_effective.visible = preferred_ui_scale == 0 or effective_ui_scale != preferred_ui_scale
+
+
 func _on_catalog_changed(_entries_by_id: Dictionary) -> void:
 	map_canvas.refresh_piece_images()
 
 func _build_cue_book() -> Control:
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size.x = 260
+	panel.custom_minimum_size.x = STAGE_CONTROLS_WIDTH
 	panel.add_theme_stylebox_override("panel", _panel_style(palette.panel, 0, 0, 0, 1))
+	stage_controls_scroll = ScrollContainer.new()
+	stage_controls_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	stage_controls_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	panel.add_child(stage_controls_scroll)
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 10)
-	panel.add_child(column)
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stage_controls_scroll.add_child(column)
 	column.add_child(_section_title("STAGE CONTROLS"))
 	column.add_child(HSeparator.new())
 	selection_name = _detail_label("Nothing selected", palette.muted)
 	selection_name.add_theme_font_size_override("font_size", 16)
+	selection_name.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(selection_name)
-	var rotate_row := HBoxContainer.new()
+	var rotate_row := VBoxContainer.new()
 	rotate_row.add_theme_constant_override("separation", 6)
 	column.add_child(rotate_row)
 	_add_piece_action(rotate_row, "ROTATE LEFT", _rotate_left, "Rotate 90 degrees counterclockwise")
 	_add_piece_action(rotate_row, "ROTATE RIGHT", _rotate_right, "Rotate 90 degrees clockwise")
-	var edit_row := HBoxContainer.new()
+	var edit_row := VBoxContainer.new()
 	edit_row.add_theme_constant_override("separation", 6)
 	column.add_child(edit_row)
 	_add_piece_action(edit_row, "MIRROR", _mirror, "Mirror the selected model horizontally")
@@ -207,7 +299,7 @@ func _build_cue_book() -> Control:
 	dimensions.add_child(grid_rows)
 	grid_columns.value_changed.connect(_on_manual_grid_changed)
 	grid_rows.value_changed.connect(_on_manual_grid_changed)
-	var dimension_actions := HBoxContainer.new()
+	var dimension_actions := VBoxContainer.new()
 	dimension_actions.add_theme_constant_override("separation", 6)
 	grid_cue_controls.add_child(dimension_actions)
 	var remove_grid := _add_button(dimension_actions, "BIGGER SQUARES", _remove_grid, "Use the next grid with larger square cells")
@@ -261,6 +353,17 @@ func _build_cue_book() -> Control:
 	guidance.add_theme_color_override("font_color", palette.muted)
 	guidance.add_theme_font_size_override("font_size", 12)
 	column.add_child(guidance)
+	column.add_child(HSeparator.new())
+	column.add_child(_small_heading("UI SCALE", 14))
+	ui_scale_select = OptionButton.new()
+	ui_scale_select.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	ui_scale_select.add_item("Auto")
+	for choice in SCALE_CHOICES:
+		ui_scale_select.add_item("%d%%" % choice)
+	ui_scale_select.item_selected.connect(_on_ui_scale_selected)
+	column.add_child(ui_scale_select)
+	ui_scale_effective = _detail_label("", palette.muted)
+	column.add_child(ui_scale_effective)
 	return panel
 
 func _transparent_landscape_icon() -> Texture2D:

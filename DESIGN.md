@@ -67,7 +67,7 @@ The implemented surface uses Godot's default sans-serif at a compact desktop sca
 
 **Key Characteristics:**
 - Stage-black shell with panel tonal layering and hairline seams.
-- Permanent 276px Cast & Props library, dominant center stage, 260px Stage Controls panel.
+- Responsive 280px or 400px Cast & Props library, dominant center stage, compact Stage Controls panel.
 - Cobalt active controls; cue-gold Export PNG and section headings.
 - Crisp pixel-art silhouettes over painted/placeholder terrain; no shadows in the UI chrome.
 
@@ -110,9 +110,11 @@ The palette is a dark theatre shell with warm paper type and sparse, high-signal
 
 ## Layout
 
-The root is a full-rect vertical shell: a 54px command bar, an expanding three-column body, and a 32px status bar. The body keeps a permanent 276px Cast & Props rail on the left, an expanding stage with 8px margins, and a compact 260px Stage Controls panel on the right. The canvas has a 720×480 minimum and uses a 24×16 logical cell map; cell size scales to the available stage.
+The root is a full-rect vertical shell: a 54px command bar, an expanding three-column body, and a 32px status bar. The body keeps a Cast & Props rail on the left, an expanding stage with 8px margins, and Stage Controls on the right. The library is 400px wide when the viewport can also fit the stage's 720px minimum and the controls' measured width; otherwise it is 280px wide. The canvas has a 720×480 minimum and scales to the available stage. Native window sizing lets the editor use the full window width without outer side borders.
 
-The library uses two-column 114×116 asset cards with a large pixel-model preview and the name plus grid footprint underneath, separated by 6px gaps and 14px group spacing. A 12px end gutter keeps the vertical scrollbar clear of the cards. Panels use 12px horizontal and 10px vertical content margins. The configured desktop viewport is 1600×900 with a 1440×810 window override; no breakpoint behavior is established in code.
+The library uses two or three columns of 114×116 asset cards, depending on the available width, with a large pixel-model preview and the name plus grid footprint underneath. Cards have 6px gaps and groups have 14px spacing. A 12px end gutter keeps the vertical scrollbar clear of the cards. Panels use 12px horizontal and 10px vertical content margins. The configured desktop viewport is 1600×900 with a 1440×810 window override.
+
+Stage Controls stays within 260px, wraps selection names, and scrolls vertically when needed. Its UI Scale setting remembers Auto or a preferred percentage while the effective scale steps down as needed to preserve a 1280×720 logical workspace.
 
 ## Elevation & Depth
 
@@ -156,7 +158,7 @@ The central canvas renders a background (imported image or original placeholder 
 ## Do's and Don'ts
 
 ### Do:
-- **Do** keep the map visually dominant between the fixed 276px and 260px rails.
+- **Do** keep the map visually dominant between the responsive Cast & Props rail and Stage Controls.
 - **Do** preserve crisp pixel silhouettes over atmospheric/painted terrain.
 - **Do** use cobalt for active state, cue gold for primary cues, and dusty rose for removal/warnings.
 - **Do** keep labels clear and pair pointer actions with the implemented keyboard shortcuts (Ctrl+S/O/Z/Y/D, R, Delete).
