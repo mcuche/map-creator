@@ -1,6 +1,9 @@
 extends Node
 
 const MainScene = preload("res://main.tscn")
+const TestSupport = preload("res://tests/cast_props_test_support.gd")
+
+var _support := TestSupport.new()
 
 
 func _ready() -> void:
@@ -10,6 +13,14 @@ func _ready() -> void:
 	var editor := MainScene.instantiate()
 	get_tree().root.add_child.call_deferred(editor)
 	await get_tree().process_frame
+	var fixture := _support.create_catalog_fixture()
+	if not fixture["ok"]:
+		_fail("Could not create catalog fixture: %s" % fixture["errors"])
+		return
+	var loaded: Dictionary = editor.cast_props_library.initialize(fixture["catalog_path"])
+	if not loaded["ok"]:
+		_fail("Fixture catalog did not load: %s" % loaded["errors"])
+		return
 	editor.preferred_ui_scale = 100
 	editor._update_ui_scale()
 	if not await _check_layout(editor, Vector2i(1280, 720), 2, 280):
@@ -57,23 +68,37 @@ func _check_layout(editor: Control, window_size: Vector2i, columns: int, rail_wi
 	if library.size.x != rail_width:
 		_fail("Cast & Props width is %dpx at %dpx, expected %dpx" % [library.size.x, window_size.x, rail_width])
 		return false
-	if library._header_actions.get_global_rect().end.x > library.get_global_rect().end.x:
-		_fail("Cast & Props header actions overflow at %dpx" % window_size.x)
-		return false
+	for action in ["OPEN FOLDER", "RELOAD"]:
+		var button := TestSupport.find_control_by_text(library, "Button", action)
+		if button == null or not button.is_visible_in_tree():
+			_fail("Cast & Props header action %s is missing at %dpx" % [action, window_size.x])
+			return false
+		if not library.get_global_rect().grow(1.0).encloses(button.get_global_rect()):
+			_fail("Cast & Props header actions overflow at %dpx" % window_size.x)
+			return false
 	var commands: HBoxContainer = editor.get_child(0).get_child(0).get_child(0)
 	if commands.get_global_rect().end.x > editor.get_global_rect().end.x + 1.0:
 		_fail("Command bar overflows at %dpx" % window_size.x)
 		return false
-	for controls in library._group_views.values():
-		var grid: GridContainer = controls["grid"]
-		if grid.columns != columns:
-			_fail("Cast & Props does not use %d columns at %dpx" % [columns, window_size.x])
+	var cards: Array[Control] = []
+	for entry_name in TestSupport.CAST_NAMES:
+		var card := TestSupport.find_control_by_tooltip(library, "Button", "Drag %s onto the map" % entry_name)
+		if card == null or not card.is_visible_in_tree():
+			_fail("Fixture card %s is missing at %dpx" % [entry_name, window_size.x])
 			return false
-		if grid.get_child_count() > columns:
-			var first_card: Control = grid.get_child(0)
-			var last_card_on_row: Control = grid.get_child(columns - 1)
-			var next_card: Control = grid.get_child(columns)
-			if not is_equal_approx(first_card.position.y, last_card_on_row.position.y) or next_card.position.y <= first_card.position.y:
+		cards.append(card)
+	var first_rect := cards[0].get_global_rect()
+	for index in range(cards.size()):
+		var card_rect := cards[index].get_global_rect()
+		if index < columns:
+			if not is_equal_approx(card_rect.position.y, first_rect.position.y) \
+					or (index > 0 and card_rect.position.x < cards[index - 1].get_global_rect().end.x):
+				_fail("Cards did not share a row of %d columns at %dpx" % [columns, window_size.x])
+				return false
+		else:
+			var previous_row_rect := cards[index - columns].get_global_rect()
+			if card_rect.position.y < previous_row_rect.end.y \
+					or not is_equal_approx(card_rect.position.x, previous_row_rect.position.x):
 				_fail("Cards did not wrap after %d columns at %dpx" % [columns, window_size.x])
 				return false
 	if editor.map_canvas.size.x < 720:
@@ -86,6 +111,11 @@ func _check_layout(editor: Control, window_size: Vector2i, columns: int, rail_wi
 		_fail("Stage Controls cannot scroll at 720px height")
 		return false
 	return true
+
+
+func _exit_tree() -> void:
+	# Pending draw calls may still need the fixture PNGs after quit() is requested.
+	_support.cleanup()
 
 
 func _fail(message: String) -> void:
