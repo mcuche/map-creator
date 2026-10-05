@@ -16,6 +16,8 @@ A personal Windows desktop map-building tool for fantasy tabletop sessions, buil
 - Export the visible map stage as PNG
 - Scale the editor controls with a saved **UI Scale** choice in Stage Controls
 
+Map files use version 3 with embedded piece images. Version 1 and version 2 prototype maps are no longer supported.
+
 ## Run
 
 1. Install Godot 4.x.

@@ -568,7 +568,7 @@ func _save() -> void:
 func _save_to_path(path: String) -> void:
 	if not path.to_lower().ends_with(".battlemap"):
 		path += ".battlemap"
-	var save_result := map_canvas.serialize_portable_state()
+	var save_result := map_canvas.serialize_state()
 	if save_result.has("error"):
 		_update_status("Could not save: %s" % save_result["error"])
 		return
@@ -593,7 +593,7 @@ func _save_to_path(path: String) -> void:
 		DirAccess.remove_absolute(temporary_path)
 		_update_status("Could not save: replace error %s" % rename_error)
 		return
-	map_canvas.commit_portable_images(save_result["images"])
+	map_canvas.commit_saved_images(save_result["images"])
 	current_path = path
 	_update_status("Saved %s" % path.get_file())
 

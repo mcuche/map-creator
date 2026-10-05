@@ -20,11 +20,6 @@ const WIDE_WIDTH := 400
 const VALID_ID_PATTERN := "^[a-z0-9_-]+$"
 const CHEVRON_UP_SVG := "<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'><path d='M2 8L6 4L10 8' stroke='#F0C96B' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/></svg>"
 const CHEVRON_DOWN_SVG := "<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'><path d='M2 4L6 8L10 4' stroke='#F0C96B' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/></svg>"
-const STARTER_IMAGE_FILES := [
-	"hero.png", "ranger.png", "mage.png", "goblin.png", "skeleton.png", "dire_wolf.png",
-	"chest.png", "campfire.png", "table.png", "tree.png", "rock.png", "ruined_wall.png"
-]
-
 var _catalog_path := USER_CATALOG_PATH
 var _image_base_override := ""
 var _groups: Array = []
@@ -203,11 +198,16 @@ func _bootstrap_user_catalog(catalog_dir := USER_CATALOG_DIR) -> String:
 		return "Could not create the catalog folder (error %d)." % error
 	var first_run := not FileAccess.file_exists(catalog_path)
 	if first_run:
-		for file_name in STARTER_IMAGE_FILES:
+		var starter := _read_catalog(STARTER_CATALOG_PATH, STARTER_IMAGE_DIR)
+		if not starter["ok"]:
+			return "Could not load starter catalog: %s" % "; ".join(PackedStringArray(starter["errors"]))
+		for entry in starter["entries"]:
+			var source := str(entry["image_path"])
+			var file_name := source.get_file()
 			var destination := catalog_dir.path_join("images").path_join(file_name)
 			if FileAccess.file_exists(destination):
 				continue
-			error = _copy_starter_image(STARTER_IMAGE_DIR.path_join(file_name), destination)
+			error = _copy_starter_image(source, destination)
 			if error != OK:
 				return "Could not copy starter image %s (error %d)." % [file_name, error]
 		error = _copy_file(STARTER_CATALOG_PATH, catalog_path)

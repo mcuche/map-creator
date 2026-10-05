@@ -11,9 +11,6 @@ func _ready() -> void:
 	if not loaded["ok"]:
 		_fail("Starter catalog did not load: %s" % loaded["errors"])
 		return
-	if library.catalog_snapshot().size() != 12:
-		_fail("Starter catalog did not expose twelve validated entries")
-		return
 	var bootstrap_dir := "user://catalog-bootstrap-test-%d" % Time.get_ticks_usec()
 	var bootstrap_error := library._bootstrap_user_catalog(bootstrap_dir)
 	if not bootstrap_error.is_empty():
@@ -22,7 +19,8 @@ func _ready() -> void:
 	if not FileAccess.file_exists(bootstrap_dir.path_join("catalog.json")):
 		_fail("First-run bootstrap did not create catalog.json")
 		return
-	for file_name in CastPropsLibrary.STARTER_IMAGE_FILES:
+	for entry in library.catalog_snapshot().values():
+		var file_name := str(entry["image_path"]).get_file()
 		var image_path := bootstrap_dir.path_join("images").path_join(file_name)
 		if Image.load_from_file(image_path).is_empty():
 			_fail("First-run bootstrap did not create a readable PNG: %s" % file_name)
@@ -36,15 +34,15 @@ func _ready() -> void:
 	if DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(images_dir)) != OK:
 		_fail("Could not create recovery fixture")
 		return
-	var hero_path := images_dir.path_join("hero.png")
-	var custom_hero := Image.create(2, 2, false, Image.FORMAT_RGBA8)
-	custom_hero.fill(Color.BLUE)
-	if custom_hero.save_png(hero_path) != OK:
-		_fail("Could not write custom hero fixture")
+	var knight_path := images_dir.path_join("knight.png")
+	var custom_knight := Image.create(2, 2, false, Image.FORMAT_RGBA8)
+	custom_knight.fill(Color.BLUE)
+	if custom_knight.save_png(knight_path) != OK:
+		_fail("Could not write custom knight fixture")
 		return
-	var original_bytes := FileAccess.get_file_as_bytes(hero_path)
+	var original_bytes := FileAccess.get_file_as_bytes(knight_path)
 	bootstrap_error = library._bootstrap_user_catalog(recovery_dir)
-	if not bootstrap_error.is_empty() or FileAccess.get_file_as_bytes(hero_path) != original_bytes:
+	if not bootstrap_error.is_empty() or FileAccess.get_file_as_bytes(knight_path) != original_bytes:
 		_fail("Catalog recovery replaced a user image: %s" % bootstrap_error)
 		return
 	var recovery_library: CastPropsLibrary = CastPropsLibraryScript.new()
@@ -52,13 +50,15 @@ func _ready() -> void:
 	if not recovery_library.initialize(recovery_dir.path_join("catalog.json"))["ok"]:
 		_fail("Recovered catalog could not be loaded")
 		return
-	for file_name in CastPropsLibrary.STARTER_IMAGE_FILES:
+	for entry in library.catalog_snapshot().values():
+		var file_name := str(entry["image_path"]).get_file()
 		if not FileAccess.file_exists(images_dir.path_join(file_name)):
 			_fail("Catalog recovery omitted %s" % file_name)
 			return
 	recovery_library.queue_free()
 	await get_tree().process_frame
-	for file_name in CastPropsLibrary.STARTER_IMAGE_FILES:
+	for entry in library.catalog_snapshot().values():
+		var file_name := str(entry["image_path"]).get_file()
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(images_dir.path_join(file_name)))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(recovery_dir.path_join("catalog.json")))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(images_dir))

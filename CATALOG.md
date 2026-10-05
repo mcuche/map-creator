@@ -8,16 +8,10 @@ The file uses strict UTF-8 JSON:
 {
   "version": 1,
   "groups": [
-    { "id": "heroes", "name": "HEROES" }
+    { "id": "cast", "name": "CAST" }
   ],
   "entries": [
-    {
-      "id": "knight",
-      "name": "Knight",
-      "group_id": "heroes",
-      "footprint": [1, 1],
-      "image": "images/knight.png"
-    }
+    { "id": "knight", "name": "Knight", "group_id": "cast", "footprint": [1, 1], "image": "images/knight.png" }
   ]
 }
 ```

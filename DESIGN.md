@@ -65,6 +65,20 @@ This is a stage-first desktop tool: the painted map owns the center, while edito
 
 The implemented surface uses Godot's default sans-serif at a compact desktop scale. Panels are flat tonal blocks joined by one-pixel seams; controls use small 4px corners and restrained internal padding. The canvas supports a painted/placeholder landscape, a regular square grid that can be detected from an imported image or drawn as an overlay, and crisp pixel-style pieces with a warm selection keyline.
 
+## Cast and Props Artwork
+
+The cast uses high-resolution fantasy pixel sprites that feel like polished RPG illustrations while retaining crisp pixel edges. Characters are shown in front or three-quarter action poses, with a clear full-body silhouette and enough breathing room around the figure for placement on the map. They should read immediately when displayed as a map piece, with large shape blocks carrying the identity before small equipment details do.
+
+Use transparent PNG artwork with a restrained but rich fantasy palette. Build forms with broad color groups, selective gradients, and sharp pixel highlights rather than flat icons or smooth painted edges. Armor, cloth, leather, fur, wood, and metal may have distinctive texture and highlight treatment, but fine detail should support the silhouette instead of filling every pixel.
+
+Characters should look like members of the same illustrated cast: strong readable poses, expressive faces or head shapes, practical fantasy equipment, controlled saturation, and warm highlight accents. Props and creatures follow the same crisp, high-resolution pixel treatment and transparent presentation.
+
+For new generated artwork, use this starting brief:
+
+> Original high-resolution fantasy pixel-art RPG sprite, transparent background, front or three-quarter action pose, full-body readable silhouette, broad color shapes, selective gradients, crisp pixel clusters, sharp highlights, rich but controlled fantasy palette, detailed equipment with restrained micro-detail, polished illustrated game asset, no text, no watermark, no environmental background.
+
+Avoid tiny top-down tile sprites, chibi proportions, smooth vector edges, painterly brushwork, flat cartoon icons, excessive micro-detail, and dark opaque backgrounds.
+
 **Key Characteristics:**
 - Stage-black shell with panel tonal layering and hairline seams.
 - Responsive 280px or 400px Cast & Props library, dominant center stage, compact Stage Controls panel.

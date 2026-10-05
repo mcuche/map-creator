@@ -31,7 +31,7 @@ func _ready() -> void:
 	if main.current_path != path or FileAccess.get_file_as_bytes(path) != saved_bytes or "Saved" in main.status_label.text:
 		_fail("Failed temporary write changed the previous map or status")
 		return
-	var entry := {"id": "hero", "name": "Hero", "group_id": "cast", "footprint": Vector2i.ONE, "image_path": ""}
+	var entry := {"id": "knight", "name": "Knight", "group_id": "cast", "footprint": Vector2i.ONE, "image_path": ""}
 	canvas.pieces = [{"instance_id": 1, "entry": entry, "cell": Vector2i(2, 2), "rotation": 0, "mirrored": false, "layer": 0}]
 	canvas.selected_id = 1
 	canvas.undo_stack = [{"pieces": [], "selected_id": -1, "next_id": 1}]
@@ -42,17 +42,25 @@ func _ready() -> void:
 	var retained_grid := canvas.manual_grid_cells
 	var retained_grid_mode := canvas.grid_mode
 	var retained_next_id := canvas.next_id
-	var valid := canvas.serialize_state()
+	var save_result := canvas.serialize_state()
+	if save_result.has("error"):
+		_fail("Could not serialize the current map: %s" % save_result["error"])
+		return
+	var valid: Dictionary = save_result["data"]
 	var invalid_maps := [
 		{},
 		{"version": 3, "pieces": []},
-		{"version": 2, "pieces": "wrong"},
-		{"version": 2, "pieces": [{}]},
-		{"version": 2, "pieces": [valid["pieces"][0], valid["pieces"][0]]},
-		{"version": 2, "pieces": [valid["pieces"][0].duplicate(true)]},
-		{"version": 2, "pieces": [valid["pieces"][0].duplicate(true), valid["pieces"][0].duplicate(true)]},
-		{"version": 2, "pieces": [valid["pieces"][0].duplicate(true)]},
-		{"version": 2, "manual_grid_columns": "wide", "pieces": []}
+		{"version": 3, "pieces": "wrong", "images": {}},
+		{"version": 3, "pieces": [{}], "images": {}},
+		{"version": 3, "pieces": [valid["pieces"][0], valid["pieces"][0]], "images": {}},
+		{"version": 3, "pieces": [valid["pieces"][0].duplicate(true)], "images": {}},
+		{"version": 3, "pieces": [valid["pieces"][0].duplicate(true), valid["pieces"][0].duplicate(true)], "images": {}},
+		{"version": 3, "pieces": [valid["pieces"][0].duplicate(true)], "images": {}},
+		{"version": 3, "manual_grid_columns": "wide", "pieces": [], "images": {}},
+		{"version": 1, "pieces": []},
+		{"version": 1, "pieces": [{"instance_id": 1, "asset_id": "table", "cell_x": 0, "cell_y": 0}]},
+		{"version": 2, "pieces": []},
+		{"version": 2, "pieces": [valid["pieces"][0]]}
 	]
 	invalid_maps[5]["pieces"][0]["cell_x"] = 1000
 	invalid_maps[6]["pieces"][1]["instance_id"] = 2
@@ -63,21 +71,20 @@ func _ready() -> void:
 		fixture.store_string(JSON.stringify(invalid_maps[index]))
 		fixture = null
 		main._load_from_path(invalid_path)
+		if invalid_maps[index].get("version") in [1, 2] and "Unsupported map version." not in main.status_label.text:
+			_fail("Old map did not report an unsupported-format error")
+			return
 		if main.current_path != path or canvas.pieces != retained_pieces or canvas.selected_id != 1 \
 				or canvas.manual_grid_cells != retained_grid or canvas.grid_mode != retained_grid_mode \
 				or canvas.next_id != retained_next_id or canvas.undo_stack != retained_undo or canvas.redo_stack != retained_redo:
 			_fail("Rejected map %d changed the open stage" % index)
 			return
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(invalid_path))
-	if not canvas.load_state({"version": 2, "pieces": []}).is_empty() or not canvas.pieces.is_empty():
+	if not canvas.load_state({"version": 3, "pieces": [], "images": {}}).is_empty() or not canvas.pieces.is_empty():
 		_fail("Valid empty map was rejected")
 		return
-	if not canvas.load_state({"version": 1, "pieces": [{"instance_id": 1, "asset_id": "unknown", "cell_x": 0, "cell_y": 0}]}).is_empty() \
-			or canvas.pieces[0]["entry"]["name"] != "Missing catalog entry":
-		_fail("Valid v1 map was rejected")
-		return
 	if not canvas.load_state(valid).is_empty() or canvas.pieces != retained_pieces:
-		_fail("Valid v2 map was rejected")
+		_fail("Valid map was rejected")
 		return
 	var image_path := absolute_folder.path_join("piece.png")
 	var image := Image.create(2, 2, false, Image.FORMAT_RGBA8)
@@ -132,11 +139,6 @@ func _ready() -> void:
 	portable["images"].erase(image_path)
 	if canvas.load_state(portable).is_empty() or canvas.pieces.size() != 2:
 		_fail("Invalid embedded image changed the open map")
-		return
-	var starter_entry := {"id": "tree", "name": "Tree", "group_id": "props", "footprint": Vector2i.ONE, "image_path": "res://assets/sprites/tree.png"}
-	canvas.pieces = [{"instance_id": 1, "entry": starter_entry, "cell": Vector2i.ZERO, "rotation": 0, "mirrored": false, "layer": 0}]
-	if canvas.serialize_portable_state().has("error"):
-		_fail("Bundled starter image could not be embedded")
 		return
 	var large_dir := folder.path_join("large-catalog")
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(large_dir.path_join("images")))

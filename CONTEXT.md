@@ -17,5 +17,5 @@ A reusable character, creature, prop, or scenery definition available from the C
 _Avoid_: Built-in asset, catalog item
 
 **Placed Piece**:
-An occurrence of a Catalog Entry on a battle map. It retains its identity, name, and footprint when placed. New map files embed its image so the saved appearance survives catalog changes; older files still use a live image path. A missing image does not remove the piece.
+An occurrence of a Catalog Entry on a battle map that retains its identity, name, and footprint. Saved maps include its image so its appearance survives catalog changes; a missing image does not remove the piece.
 _Avoid_: Catalog Entry, object

@@ -25,11 +25,11 @@ const CONTEXT_MENU_SIZE := Vector2i(168, 136)
 const CONTEXT_MIRROR := 0
 const CONTEXT_ROTATE := 1
 const CONTEXT_REMOVE := 2
+const MAP_FILE_VERSION := 3
 const MAX_EMBEDDED_IMAGE_BYTES := 2 * 1024 * 1024
 const MAX_EMBEDDED_IMAGES_BYTES := 32 * 1024 * 1024
 const MAX_EMBEDDED_IMAGE_DIMENSION := 4096
 const GridDetectorScript = preload("res://scripts/grid_detector.gd")
-const LegacyCatalogV1Script = preload("res://scripts/legacy_catalog_v1.gd")
 
 var piece_textures := {}
 var embedded_images := {}
@@ -64,6 +64,7 @@ var context_menu_buttons: Array[Button] = []
 
 func _ready() -> void:
 	custom_minimum_size = Vector2(720, 480)
+	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	focus_mode = Control.FOCUS_ALL
 	clip_contents = true
@@ -514,7 +515,7 @@ func clear_map() -> void:
 	state_changed.emit()
 	queue_redraw()
 
-func serialize_state() -> Dictionary:
+func _serialize_layout() -> Dictionary:
 	var serialized: Array = []
 	for piece in pieces:
 		var entry: Dictionary = piece.get("entry", _missing_entry_snapshot("missing"))
@@ -536,7 +537,6 @@ func serialize_state() -> Dictionary:
 			"layer": piece["layer"]
 		})
 	return {
-		"version": 2,
 		"grid_mode": grid_mode,
 		"grid_opacity": grid_opacity,
 		"grid_color": grid_color.to_html(false),
@@ -555,8 +555,8 @@ func serialize_state() -> Dictionary:
 		"pieces": serialized
 	}
 
-func serialize_portable_state() -> Dictionary:
-	var data := serialize_state()
+func serialize_state() -> Dictionary:
+	var data := _serialize_layout()
 	var images := {}
 	var snapshots := {}
 	var total_bytes := 0
@@ -594,11 +594,11 @@ func serialize_portable_state() -> Dictionary:
 			return {"error": "Images exceed the 32 MiB map limit."}
 		snapshots[path] = bytes
 		images[path] = Marshalls.raw_to_base64(bytes)
-	data["version"] = 3
+	data["version"] = MAP_FILE_VERSION
 	data["images"] = images
 	return {"data": data, "images": snapshots}
 
-func commit_portable_images(images: Dictionary) -> void:
+func commit_saved_images(images: Dictionary) -> void:
 	embedded_images = images.duplicate(true)
 	piece_textures.clear()
 	queue_redraw()
@@ -607,17 +607,20 @@ func load_state(data: Dictionary) -> String:
 	var validation_error := _validate_saved_state(data)
 	if not validation_error.is_empty():
 		return validation_error
+	var images := {}
+	for path in data["images"]:
+		images[path] = Marshalls.base64_to_raw(data["images"][path])
+	_restore_layout(data, images)
+	return ""
+
+func _restore_layout(data: Dictionary, images: Dictionary) -> void:
 	reset_zoom()
-	embedded_images.clear()
+	embedded_images = images.duplicate(true)
 	piece_textures.clear()
-	if int(data["version"]) == 3:
-		for path in data["images"]:
-			embedded_images[path] = Marshalls.base64_to_raw(data["images"][path])
 	pieces.clear()
 	selected_id = -1
 	next_id = 1
 	var saved_grid_mode := int(data.get("grid_mode", GRID_SQUARE))
-	# Older prototypes used value 1 for the removed hex-grid option.
 	grid_mode = saved_grid_mode if saved_grid_mode in [GRID_SQUARE, GRID_DETECTED, GRID_HIDDEN] else GRID_SQUARE
 	grid_opacity = float(data.get("grid_opacity", 0.30))
 	grid_color = Color.from_string(str(data.get("grid_color", "f2e8c2")), Color(0.95, 0.91, 0.76, 1.0))
@@ -665,32 +668,30 @@ func load_state(data: Dictionary) -> String:
 	selection_changed.emit(null)
 	state_changed.emit()
 	queue_redraw()
-	return ""
 
 func _validate_saved_state(data: Dictionary) -> String:
-	if not data.has("version") or not _saved_integer(data["version"]) or int(data["version"]) not in [1, 2, 3]:
+	if not data.has("version") or not _saved_integer(data["version"]) or int(data["version"]) != MAP_FILE_VERSION:
 		return "Unsupported map version."
 	if not data.get("pieces") is Array:
 		return "pieces must be an array."
-	if int(data["version"]) == 3:
-		if not data.get("images") is Dictionary:
-			return "images must be an object."
-		var total_bytes := 0
-		for path in data["images"]:
-			if not path is String or not data["images"][path] is String:
-				return "images must map paths to PNG data."
-			var encoded: String = data["images"][path]
-			if encoded.length() > ceili(float(MAX_EMBEDDED_IMAGE_BYTES) / 3.0) * 4:
-				return "Embedded image exceeds the 2 MiB limit."
-			var bytes := Marshalls.base64_to_raw(encoded)
-			if bytes.is_empty() or bytes.size() > MAX_EMBEDDED_IMAGE_BYTES or Marshalls.raw_to_base64(bytes) != encoded:
-				return "Embedded image data is invalid."
-			total_bytes += bytes.size()
-			if total_bytes > MAX_EMBEDDED_IMAGES_BYTES:
-				return "Embedded images exceed the 32 MiB limit."
-			var image := Image.new()
-			if image.load_png_from_buffer(bytes) != OK or image.get_width() > MAX_EMBEDDED_IMAGE_DIMENSION or image.get_height() > MAX_EMBEDDED_IMAGE_DIMENSION:
-				return "Embedded image is not a readable PNG within 4096×4096 pixels."
+	if not data.get("images") is Dictionary:
+		return "images must be an object."
+	var total_bytes := 0
+	for path in data["images"]:
+		if not path is String or not data["images"][path] is String:
+			return "images must map paths to PNG data."
+		var encoded: String = data["images"][path]
+		if encoded.length() > ceili(float(MAX_EMBEDDED_IMAGE_BYTES) / 3.0) * 4:
+			return "Embedded image exceeds the 2 MiB limit."
+		var bytes := Marshalls.base64_to_raw(encoded)
+		if bytes.is_empty() or bytes.size() > MAX_EMBEDDED_IMAGE_BYTES or Marshalls.raw_to_base64(bytes) != encoded:
+			return "Embedded image data is invalid."
+		total_bytes += bytes.size()
+		if total_bytes > MAX_EMBEDDED_IMAGES_BYTES:
+			return "Embedded images exceed the 32 MiB limit."
+		var image := Image.new()
+		if image.load_png_from_buffer(bytes) != OK or image.get_width() > MAX_EMBEDDED_IMAGE_DIMENSION or image.get_height() > MAX_EMBEDDED_IMAGE_DIMENSION:
+			return "Embedded image is not a readable PNG within 4096×4096 pixels."
 	for key in ["grid_mode", "manual_grid_columns", "manual_grid_rows", "detected_grid_cells_x", "detected_grid_cells_y"]:
 		if data.has(key) and not _saved_integer(data[key]):
 			return "%s must be a whole number." % key
@@ -728,26 +729,20 @@ func _validate_saved_state(data: Dictionary) -> String:
 				return "%s.%s must be a whole number." % [location, key]
 		if item.has("mirrored") and not item["mirrored"] is bool:
 			return "%s.mirrored must be a boolean." % location
-		var footprint := Vector2i.ONE
-		if int(data["version"]) >= 2:
-			var entry = item.get("entry", null)
-			if not entry is Dictionary:
-				return "%s.entry must be an object." % location
-			for key in ["id", "name", "group_id", "image_path"]:
-				if not entry.has(key) or not entry[key] is String:
-					return "%s.entry.%s must be a string." % [location, key]
-			if int(data["version"]) == 3 and not entry["image_path"].is_empty() and not data["images"].has(entry["image_path"]):
-				return "%s.entry image is missing from the map." % location
-			for key in ["footprint_width", "footprint_height"]:
-				if not entry.has(key) or not _saved_integer(entry[key]):
-					return "%s.entry.%s must be a whole number." % [location, key]
-			footprint = Vector2i(int(entry["footprint_width"]), int(entry["footprint_height"]))
-			if footprint.x < 1 or footprint.y < 1 or footprint.x > MAX_MANUAL_GRID_SIZE or footprint.y > MAX_MANUAL_GRID_SIZE:
-				return "%s.entry footprint must be between 1 and 100." % location
-		else:
-			if not item.has("asset_id") or not item["asset_id"] is String or item["asset_id"].is_empty():
-				return "%s.asset_id must be a non-empty string." % location
-			footprint = _entry_snapshot_from_saved_piece(item)["footprint"]
+		var entry = item.get("entry", null)
+		if not entry is Dictionary:
+			return "%s.entry must be an object." % location
+		for key in ["id", "name", "group_id", "image_path"]:
+			if not entry.has(key) or not entry[key] is String:
+				return "%s.entry.%s must be a string." % [location, key]
+		if not entry["image_path"].is_empty() and not data["images"].has(entry["image_path"]):
+			return "%s.entry image is missing from the map." % location
+		for key in ["footprint_width", "footprint_height"]:
+			if not entry.has(key) or not _saved_integer(entry[key]):
+				return "%s.entry.%s must be a whole number." % [location, key]
+		var footprint := Vector2i(int(entry["footprint_width"]), int(entry["footprint_height"]))
+		if footprint.x < 1 or footprint.y < 1 or footprint.x > MAX_MANUAL_GRID_SIZE or footprint.y > MAX_MANUAL_GRID_SIZE:
+			return "%s.entry footprint must be between 1 and 100." % location
 		if int(item.get("rotation", 0)) % 180 != 0:
 			footprint = Vector2i(footprint.y, footprint.x)
 		var cell := Vector2i(int(item["cell_x"]), int(item["cell_y"]))
@@ -786,8 +781,7 @@ func export_visible_png(path: String) -> Error:
 	export_viewport.add_child(export_canvas)
 	export_canvas.custom_minimum_size = Vector2.ZERO
 	export_canvas.size = Vector2(export_size)
-	export_canvas.load_state(serialize_state())
-	export_canvas.embedded_images = embedded_images.duplicate(true)
+	export_canvas._restore_layout(_serialize_layout(), embedded_images)
 	# Match the images currently displayed, even if their source files changed.
 	export_canvas.piece_textures = piece_textures.duplicate()
 	export_canvas.background_texture = background_texture
@@ -862,24 +856,18 @@ func _find_nearest_free_cell(preferred: Vector2i, footprint: Vector2i, ignored_i
 
 
 func _entry_snapshot_from_saved_piece(item: Dictionary) -> Dictionary:
-	var saved_entry = item.get("entry", null)
-	if saved_entry is Dictionary:
-		var footprint := Vector2i(
-			clampi(int(saved_entry.get("footprint_width", 1)), 1, MAX_MANUAL_GRID_SIZE),
-			clampi(int(saved_entry.get("footprint_height", 1)), 1, MAX_MANUAL_GRID_SIZE)
-		)
-		return {
-			"id": str(saved_entry.get("id", "missing")),
-			"name": str(saved_entry.get("name", "Missing catalog entry")),
-			"group_id": str(saved_entry.get("group_id", "")),
-			"footprint": footprint,
-			"image_path": str(saved_entry.get("image_path", ""))
-		}
-	var legacy_id := str(item.get("asset_id", "missing"))
-	var legacy_entry: Dictionary = LegacyCatalogV1Script.entry_snapshot(legacy_id)
-	if not legacy_entry.is_empty():
-		return legacy_entry
-	return _missing_entry_snapshot(legacy_id)
+	var saved_entry: Dictionary = item["entry"]
+	var footprint := Vector2i(
+		clampi(int(saved_entry.get("footprint_width", 1)), 1, MAX_MANUAL_GRID_SIZE),
+		clampi(int(saved_entry.get("footprint_height", 1)), 1, MAX_MANUAL_GRID_SIZE)
+	)
+	return {
+		"id": str(saved_entry.get("id", "missing")),
+		"name": str(saved_entry.get("name", "Missing catalog entry")),
+		"group_id": str(saved_entry.get("group_id", "")),
+		"footprint": footprint,
+		"image_path": str(saved_entry.get("image_path", ""))
+	}
 
 
 func _normalized_entry_snapshot(entry: Dictionary) -> Dictionary:

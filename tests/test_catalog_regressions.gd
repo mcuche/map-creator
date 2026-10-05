@@ -30,20 +30,6 @@ func _ready() -> void:
 		_fail("Valid rotation was rejected")
 		return
 
-	var legacy := {"version": 1, "manual_grid_columns": 14, "manual_grid_rows": 10,
-		"pieces": [{"instance_id": 1, "asset_id": "table", "cell_x": 0, "cell_y": 0}]}
-	canvas.load_state(legacy)
-	var restored: Dictionary = canvas.pieces[0]["entry"]
-	if restored["name"] != "Long table" or restored["footprint"] != Vector2i(2, 1) \
-			or restored["image_path"] != "res://assets/sprites/table.png":
-		_fail("Legacy map did not restore the frozen v1 definition")
-		return
-	legacy["pieces"] = [{"instance_id": 1, "asset_id": "unknown", "cell_x": 0, "cell_y": 0}]
-	canvas.load_state(legacy)
-	if canvas.pieces[0]["entry"]["name"] != "Missing catalog entry":
-		_fail("Unknown legacy ID did not use a placeholder")
-		return
-
 	var user_path := "user://piece-image-refresh-test-%d.png" % Time.get_ticks_usec()
 	var image_path := ProjectSettings.globalize_path(user_path)
 	var image_entry := {"image_path": image_path}

@@ -2,7 +2,7 @@ extends Node
 
 const MapCanvasScript = preload("res://scripts/map_canvas.gd")
 
-const HERO := {"id": "hero", "name": "Hero", "group_id": "cast", "footprint": Vector2i(1, 1), "image_path": "res://assets/sprites/hero.png"}
+const KNIGHT := {"id": "knight", "name": "Knight", "group_id": "cast", "footprint": Vector2i(1, 1), "image_path": "res://assets/sprites/knight.png"}
 const TABLE := {"id": "table", "name": "Long table", "group_id": "props", "footprint": Vector2i(2, 1), "image_path": "res://assets/sprites/table.png"}
 
 func _ready() -> void:
@@ -53,7 +53,7 @@ func _ready() -> void:
 		_fail("Built-in landscape did not retain manual-grid mode")
 		return
 	canvas.pieces = [
-		{"instance_id": 1, "entry": HERO.duplicate(true), "cell": Vector2i(2, 2), "rotation": 0, "mirrored": false, "layer": 0},
+		{"instance_id": 1, "entry": KNIGHT.duplicate(true), "cell": Vector2i(2, 2), "rotation": 0, "mirrored": false, "layer": 0},
 		{"instance_id": 2, "entry": TABLE.duplicate(true), "cell": Vector2i(5, 4), "rotation": 0, "mirrored": false, "layer": 1}
 	]
 	if canvas.context_menu == null or canvas.context_menu_buttons.size() != 3:
@@ -89,34 +89,24 @@ func _ready() -> void:
 	if not bool(canvas.get_selected_piece()["mirrored"]):
 		_fail("Mirror did not update the selected piece")
 		return
-	var saved := canvas.serialize_state()
+	var save_result := canvas.serialize_state()
+	if save_result.has("error"):
+		_fail("Could not serialize placed pieces: %s" % save_result["error"])
+		return
+	var saved: Dictionary = save_result["data"]
 	if int(saved["manual_grid_columns"]) != 18 or int(saved["manual_grid_rows"]) != 12:
 		_fail("Manual grid dimensions were not serialized")
 		return
 	var restored: BattleMapCanvas = MapCanvasScript.new()
 	add_child(restored)
-	restored.load_state(saved)
+	if not restored.load_state(saved).is_empty():
+		_fail("Saved map was rejected")
+		return
 	if not restored.grid_color.is_equal_approx(custom_grid_color):
 		_fail("Custom grid line color was not restored from the saved map")
 		return
 	if not bool(saved["pieces"][1]["mirrored"]) or saved["pieces"][1]["entry"]["id"] != "table":
 		_fail("Mirror state was not serialized")
-		return
-	var legacy := saved.duplicate(true)
-	legacy["version"] = 1
-	legacy["pieces"] = [{"instance_id": 9, "asset_id": "hero", "cell_x": 1, "cell_y": 1, "rotation": 0, "mirrored": false, "layer": 0}]
-	var legacy_restored: BattleMapCanvas = MapCanvasScript.new()
-	add_child(legacy_restored)
-	legacy_restored.load_state(legacy)
-	var legacy_entry: Dictionary = legacy_restored.pieces[0]["entry"]
-	if legacy_entry["name"] != "Hero" or legacy_entry["footprint"] != Vector2i.ONE \
-			or legacy_entry["image_path"] != HERO["image_path"]:
-		_fail("Legacy catalog ID did not restore its frozen v1 definition")
-		return
-	legacy["pieces"] = [{"instance_id": 10, "asset_id": "unknown", "cell_x": 1, "cell_y": 1}]
-	legacy_restored.load_state(legacy)
-	if legacy_restored.pieces[0]["entry"]["name"] != "Missing catalog entry":
-		_fail("Unknown legacy ID did not use a missing-entry placeholder")
 		return
 	canvas._on_context_action(BattleMapCanvas.CONTEXT_MIRROR)
 	if bool(canvas.get_selected_piece()["mirrored"]):
