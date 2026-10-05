@@ -97,7 +97,7 @@ The palette is a dark theatre shell with warm paper type and sparse, high-signal
 - **Dusty Rose Warning** (#d67a73): the Remove From Stage action and warning-toned affordances.
 
 ### Neutral
-- **Stage Black** (#111827): command/status bars, canvas-adjacent shell, and default field background.
+- **Stage Black** (#111827): command bar, canvas-adjacent shell, and default field background.
 - **Panel** (#182128): Cast & Props and Stage Controls surfaces.
 - **Panel Raised** (#202b33): default button and option-control surfaces.
 - **Hairline Seam** (#344550): one-pixel panel/control borders.
@@ -124,7 +124,7 @@ The palette is a dark theatre shell with warm paper type and sparse, high-signal
 
 ## Layout
 
-The root is a full-rect vertical shell: a 54px command bar, an expanding three-column body, and a 32px status bar. The body keeps a Cast & Props rail on the left, an expanding stage with 8px margins, and Stage Controls on the right. The library is 400px wide when the viewport can also fit the stage's 720px minimum and the controls' measured width; otherwise it is 280px wide. The canvas has a 720×480 minimum and scales to the available stage. Native window sizing lets the editor use the full window width without outer side borders.
+The root is a full-rect vertical shell: a 54px command bar and an expanding three-column body, with no footer. The body keeps a Cast & Props rail on the left, an expanding stage with 8px margins, and Stage Controls on the right. The library is 400px wide when the viewport can also fit the stage's 720px minimum and the controls' measured width; otherwise it is 280px wide. The canvas has a 720×480 minimum and scales to the available stage. Native window sizing lets the editor use the full window width without outer side borders.
 
 The library uses two or three columns of 114×116 asset cards, depending on the available width, with a large pixel-model preview and the name plus grid footprint underneath. Cards have 6px gaps and groups have 14px spacing. A 12px end gutter keeps the vertical scrollbar clear of the cards. Panels use 12px horizontal and 10px vertical content margins. The configured desktop viewport is 1600×900 with a 1440×810 window override.
 
@@ -152,7 +152,7 @@ Controls and fields use a consistent 4px radius with one-pixel borders. Panels a
 
 ### Cards / Containers
 - **Corner Style:** rectangular panels; no corner radius.
-- **Background:** panel for rails, stage-black for command/status bars, panel-raised for controls.
+- **Background:** panel for rails, stage-black for command bar, panel-raised for controls.
 - **Shadow Strategy:** no UI shadows; rely on tonal layering and seams.
 - **Border:** one-pixel hairline seam on panel edges where configured.
 - **Internal Padding:** 12px horizontal and 10px vertical.
@@ -163,8 +163,11 @@ Controls and fields use a consistent 4px radius with one-pixel borders. Panels a
 - **Behavior:** the Cast & Props search filters by asset name or group.
 
 ### Navigation
-- **Style:** a single command bar, not page navigation; 54px high with title, file actions, undo/redo, grid selector, and right-aligned Export PNG.
+- **Style:** a single command bar, not page navigation; 54px high with title, file actions, undo/redo, zoom controls, grid selector, and right-aligned Shortcuts and Export PNG.
 - **States:** command buttons use the shared default/hover/focus treatment; Export PNG is the gold primary.
+
+### Shortcuts and Feedback
+The Shortcuts button opens a themed modal reference grouped into File, Editing, View, and Mouse controls. Actions appear on the left and their shortcuts or mouse gestures on the right. Keyboard keys use bordered keycaps separated by an unboxed plus sign; the zoom keycaps show only + and -. CLOSE or Escape dismisses it and returns keyboard focus to the Shortcuts button. Editing shortcuts are suspended while this reference or an error dialog is visible. Routine status messages are omitted; rejected actions and file, landscape, export, and UI-scale failures use a dismissible error dialog. Catalog failures retain their existing catalog dialog.
 
 ### Stage Canvas
 The central canvas renders a background (imported image or original placeholder landscape), a square grid that can be overlaid or hidden, and pixel-style cast/prop silhouettes. Imported landscapes are fitted without distortion and centered inside stage-black side or top/bottom borders. On landscape import, regular square lines are detected automatically; Detected mode transforms their origin and spacing into that fitted image rectangle and snaps without drawing a second grid. Pieces are dragged directly from Cast & Props onto the map, then use exclusive whole-cell occupancy, drag repositioning, rotation, horizontal mirroring, duplication, delete, and undo/redo. Dragged pieces stop at their last valid cell instead of entering occupied footprints, and library drops advertise occupied targets as invalid before release.

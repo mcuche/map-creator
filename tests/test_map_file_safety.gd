@@ -18,18 +18,19 @@ func _ready() -> void:
 	original = null
 	main._save_to_path(path)
 	var saved_bytes := FileAccess.get_file_as_bytes(path)
-	if main.current_path != path or saved_bytes == "old bytes".to_utf8_buffer() or "Saved" not in main.status_label.text:
+	var saved_state = JSON.parse_string(saved_bytes.get_string_from_utf8())
+	if main.current_path != path or not saved_state is Dictionary or saved_state.get("version") != 3 or main.error_dialog.visible:
 		_fail("Successful save did not replace the map")
 		return
 	var blocked_path := folder.path_join("blocked.battlemap")
 	DirAccess.make_dir_absolute(ProjectSettings.globalize_path(blocked_path))
 	main._save_to_path(blocked_path)
-	if main.current_path != path or FileAccess.get_file_as_bytes(path) != saved_bytes or "Saved" in main.status_label.text:
-		_fail("Failed replacement changed the previous map or status")
+	if main.current_path != path or FileAccess.get_file_as_bytes(path) != saved_bytes or not _dismiss_error(main, "Could not save"):
+		_fail("Failed replacement changed the previous map or did not display its error")
 		return
 	main._save_to_path(folder.path_join("missing").path_join("unwritable.battlemap"))
-	if main.current_path != path or FileAccess.get_file_as_bytes(path) != saved_bytes or "Saved" in main.status_label.text:
-		_fail("Failed temporary write changed the previous map or status")
+	if main.current_path != path or FileAccess.get_file_as_bytes(path) != saved_bytes or not _dismiss_error(main, "Could not save"):
+		_fail("Failed temporary write changed the previous map or did not display its error")
 		return
 	var entry := {"id": "knight", "name": "Knight", "group_id": "cast", "footprint": Vector2i.ONE, "image_path": ""}
 	canvas.pieces = [{"instance_id": 1, "entry": entry, "cell": Vector2i(2, 2), "rotation": 0, "mirrored": false, "layer": 0}]
@@ -71,8 +72,9 @@ func _ready() -> void:
 		fixture.store_string(JSON.stringify(invalid_maps[index]))
 		fixture = null
 		main._load_from_path(invalid_path)
-		if invalid_maps[index].get("version") in [1, 2] and "Unsupported map version." not in main.status_label.text:
-			_fail("Old map did not report an unsupported-format error")
+		var expected_error := "Unsupported map version." if invalid_maps[index].get("version") in [1, 2] else "battle map"
+		if not _dismiss_error(main, expected_error):
+			_fail("Rejected map did not display its error")
 			return
 		if main.current_path != path or canvas.pieces != retained_pieces or canvas.selected_id != 1 \
 				or canvas.manual_grid_cells != retained_grid or canvas.grid_mode != retained_grid_mode \
@@ -116,7 +118,7 @@ func _ready() -> void:
 	DirAccess.remove_absolute(image_path)
 	canvas.pieces[1]["cell"] = Vector2i(4, 2)
 	main._save_to_path(path)
-	if "Saved" not in main.status_label.text or FileAccess.get_file_as_bytes(path) == portable_bytes:
+	if main.error_dialog.visible or FileAccess.get_file_as_bytes(path) == portable_bytes:
 		_fail("Second save without reopening lost the committed image")
 		return
 	main._load_from_path(path)
@@ -124,15 +126,17 @@ func _ready() -> void:
 	if canvas.pieces.size() != 2 or canvas.pieces[1]["cell"] != Vector2i(4, 2) or restored_texture == null or restored_texture.get_image().get_pixel(0, 0) != Color.RED:
 		_fail("Map did not restore its image after the PNG was removed")
 		return
+	canvas.pieces[0]["cell"] = Vector2i(1, 2)
 	main._save_to_path(path)
-	if "Saved" not in main.status_label.text:
+	var resaved = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if main.error_dialog.visible or not resaved is Dictionary or resaved["pieces"][0]["cell_x"] != 1:
 		_fail("Map could not be saved again after the PNG was removed")
 		return
 	var new_image_path := absolute_folder.path_join("missing.png")
 	canvas.pieces[0]["entry"]["image_path"] = new_image_path
 	var intact_bytes := FileAccess.get_file_as_bytes(path)
 	main._save_to_path(path)
-	if "Could not save" not in main.status_label.text or FileAccess.get_file_as_bytes(path) != intact_bytes:
+	if not _dismiss_error(main, "Could not save") or FileAccess.get_file_as_bytes(path) != intact_bytes:
 		_fail("Unrecoverable image replaced the previous map")
 		return
 	canvas.pieces[0]["entry"]["image_path"] = image_path
@@ -175,7 +179,7 @@ func _ready() -> void:
 	main._save_to_path(path)
 	var reduced = JSON.parse_string(FileAccess.get_file_as_string(path))
 	var reduced_bytes := Marshalls.base64_to_raw(reduced["images"][ProjectSettings.globalize_path(large_path)])
-	if "Saved" not in main.status_label.text or reduced_bytes.size() > BattleMapCanvas.MAX_EMBEDDED_IMAGE_BYTES or FileAccess.get_file_as_bytes(large_path) != original_large_bytes:
+	if main.error_dialog.visible or reduced_bytes.size() > BattleMapCanvas.MAX_EMBEDDED_IMAGE_BYTES or FileAccess.get_file_as_bytes(large_path) != original_large_bytes:
 		_fail("Oversized catalog PNG was not safely reduced for the map")
 		return
 	catalog.queue_free()
@@ -195,6 +199,11 @@ func _ready() -> void:
 	DirAccess.remove_absolute(absolute_folder)
 	print("Map file safety tests passed")
 	get_tree().quit(0)
+
+func _dismiss_error(main: Control, expected_message: String) -> bool:
+	var reported: bool = main.error_dialog.visible and expected_message in main.error_dialog.dialog_text
+	main.error_dialog.hide()
+	return reported
 
 func _fail(message: String) -> void:
 	push_error(message)

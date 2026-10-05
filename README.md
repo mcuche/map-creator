@@ -35,12 +35,19 @@ The responsive layout and UI scale checks are `res://tests/test_responsive_layou
 
 ## Shortcuts
 
-- `Ctrl+S` — save
-- `Ctrl+O` — open
-- `Ctrl+Z` / `Ctrl+Y` — undo / redo
-- `Ctrl+D` — duplicate selected piece
-- `R` — rotate selected piece
-- `Delete` — remove selected piece
+Use **SHORTCUTS** in the top menu to open the keyboard and mouse reference. Close it with **CLOSE** or **Escape**. The workspace has no footer; failures appear in a dismissible dialog.
+
+- Save — `Ctrl` + `S`
+- Open — `Ctrl` + `O`
+- Undo / redo — `Ctrl` + `Z` / `Ctrl` + `Y`
+- Duplicate selected piece — `Ctrl` + `D`
+- Rotate selected piece clockwise / counterclockwise — `R` / `Shift` + `R`
+- Remove selected piece — `Delete`
+- Zoom in — hold `Ctrl` and press the `+` key
+- Zoom out — hold `Ctrl` and press the `-` key
+- Fit the map to the stage — `Ctrl` + `0`
+- Drag from Cast & Props to place a piece; left-click and drag pieces to select and move them
+- Right-click a piece for its object menu; right-drag to pan; use the mouse wheel to zoom
 
 The bundled library includes an original detailed fantasy pixel-art sprite set. Import a landscape through **LANDSCAPE**; custom pixel-asset importing is planned for a later iteration.
 

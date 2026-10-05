@@ -37,7 +37,10 @@ var grid_rows: SpinBox
 var grid_shape_warning: Label
 var landscape_select: OptionButton
 var zoom_label: Label
-var status_label: Label
+var shortcuts_button: Button
+var shortcuts_dialog: PopupPanel
+var shortcuts_close_button: Button
+var error_dialog: AcceptDialog
 var save_dialog: FileDialog
 var open_dialog: FileDialog
 var export_dialog: FileDialog
@@ -74,8 +77,7 @@ func _ready() -> void:
 	_build_dialogs()
 	map_canvas.selection_changed.connect(_on_selection_changed)
 	map_canvas.state_changed.connect(_refresh_actions)
-	map_canvas.placement_finished.connect(_on_asset_dropped)
-	map_canvas.action_rejected.connect(_update_status)
+	map_canvas.action_rejected.connect(_show_error)
 	map_canvas.zoom_changed.connect(_on_zoom_changed)
 	map_canvas.resized.connect(_update_grid_shape_warning)
 	_sync_manual_grid_inputs()
@@ -100,29 +102,25 @@ func _build_interface() -> void:
 	commands.add_theme_constant_override("separation", 6)
 	command_bar.add_child(commands)
 	commands.add_child(_title_label("BATTLE MAP CREATOR"))
-	_add_spacer(commands, 18)
 	_add_button(commands, "NEW", _new_map, "Clear the current stage")
 	_add_button(commands, "OPEN", _show_open, "Open an editable battle map")
 	_add_button(commands, "SAVE", _save, "Save the editable battle map")
 	_add_button(commands, "IMPORT LANDSCAPE", _show_background, "Import a painted background")
-	_add_spacer(commands, 12)
 	var undo_button := _add_button(commands, "↶", _undo, "Undo")
 	undo_button.add_theme_font_size_override("font_size", 28)
 	_compact_large_glyph_button(undo_button)
 	var redo_button := _add_button(commands, "↷", _redo, "Redo")
 	redo_button.add_theme_font_size_override("font_size", 28)
 	_compact_large_glyph_button(redo_button)
-	_add_spacer(commands, 12)
-	_add_button(commands, "−", _zoom_out, "Zoom out (Ctrl+-)")
+	_add_button(commands, "−", _zoom_out, "Zoom out: hold Ctrl and press the minus (-) key")
 	zoom_label = Label.new()
 	zoom_label.text = "25%"
 	zoom_label.custom_minimum_size.x = 48
 	zoom_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	zoom_label.add_theme_color_override("font_color", palette.muted)
 	commands.add_child(zoom_label)
-	_add_button(commands, "+", _zoom_in, "Zoom in (Ctrl++)")
+	_add_button(commands, "+", _zoom_in, "Zoom in: hold Ctrl and press the plus (+) key")
 	_add_button(commands, "FIT", _zoom_reset, "Reset the map view (Ctrl+0)")
-	_add_spacer(commands, 12)
 	grid_label = Label.new()
 	grid_label.text = "GRID"
 	grid_label.add_theme_color_override("font_color", palette.muted)
@@ -136,6 +134,7 @@ func _build_interface() -> void:
 	var flexible := Control.new()
 	flexible.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	commands.add_child(flexible)
+	shortcuts_button = _add_button(commands, "SHORTCUTS", _show_shortcuts, "Show keyboard shortcuts and mouse controls")
 	var export_button := _add_button(commands, "EXPORT PNG", _show_export, "Export the stage as a PNG image")
 	export_button.add_theme_stylebox_override("normal", _button_style(palette.gold, palette.gold.darkened(0.18)))
 	export_button.add_theme_stylebox_override("hover", _button_style(palette.gold.lightened(0.14), palette.gold.darkened(0.03)))
@@ -167,18 +166,8 @@ func _build_interface() -> void:
 	stage_controls = _build_cue_book()
 	body.add_child(stage_controls)
 
-	var status := PanelContainer.new()
-	status.custom_minimum_size.y = 32
-	status.add_theme_stylebox_override("panel", _panel_style(palette.stage, 1, 0, 0, 0))
-	shell.add_child(status)
-	status_label = Label.new()
-	status_label.add_theme_color_override("font_color", palette.muted)
-	status_label.add_theme_font_size_override("font_size", 12)
-	status.add_child(status_label)
-
 func _build_library() -> Control:
 	cast_props_library = CastPropsLibraryScript.new()
-	cast_props_library.status_message.connect(_update_status)
 	cast_props_library.catalog_changed.connect(_on_catalog_changed)
 	return cast_props_library
 
@@ -203,7 +192,7 @@ func _on_ui_scale_selected(index: int) -> void:
 	var config := ConfigFile.new()
 	config.set_value("display", "ui_scale", preferred_ui_scale)
 	if config.save(DISPLAY_SETTINGS_PATH) != OK:
-		_update_status("Could not save UI scale preference")
+		_show_error("Could not save UI scale preference")
 	_update_ui_scale()
 
 
@@ -371,7 +360,102 @@ func _transparent_landscape_icon() -> Texture2D:
 	image.fill(Color.TRANSPARENT)
 	return ImageTexture.create_from_image(image)
 
+func _build_shortcuts_dialog() -> void:
+	shortcuts_dialog = PopupPanel.new()
+	shortcuts_dialog.exclusive = true
+	shortcuts_dialog.unresizable = true
+	shortcuts_dialog.wrap_controls = true
+	shortcuts_dialog.close_requested.connect(shortcuts_dialog.hide)
+	shortcuts_dialog.about_to_popup.connect(func(): shortcuts_close_button.grab_focus.call_deferred())
+	shortcuts_dialog.popup_hide.connect(func(): shortcuts_button.grab_focus.call_deferred())
+	add_child(shortcuts_dialog)
+	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	margin.add_theme_constant_override("margin_left", 18)
+	margin.add_theme_constant_override("margin_top", 16)
+	margin.add_theme_constant_override("margin_right", 18)
+	margin.add_theme_constant_override("margin_bottom", 16)
+	shortcuts_dialog.add_child(margin)
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 14)
+	margin.add_child(content)
+	content.add_child(_section_title("SHORTCUTS"))
+	_add_shortcut_group(content, "FILE", [
+		["Save map", ["Ctrl", "S"]],
+		["Open map", ["Ctrl", "O"]]
+	])
+	_add_shortcut_group(content, "EDITING", [
+		["Undo", ["Ctrl", "Z"]],
+		["Redo", ["Ctrl", "Y"]],
+		["Duplicate selected piece", ["Ctrl", "D"]],
+		["Rotate selected piece clockwise", ["R"]],
+		["Rotate selected piece counterclockwise", ["Shift", "R"]],
+		["Remove selected piece", ["Delete"]]
+	])
+	_add_shortcut_group(content, "VIEW", [
+		["Zoom in", ["Ctrl", "+"]],
+		["Zoom out", ["Ctrl", "-"]],
+		["Fit map to the stage", ["Ctrl", "0"]]
+	])
+	_add_shortcut_group(content, "MOUSE", [
+		["Place a piece on the map", "Drag from Cast & Props"],
+		["Select / move a piece", "Left-click / drag piece"],
+		["Open object menu", "Right-click piece"],
+		["Pan the map", "Right-drag"],
+		["Zoom in / out", "Mouse wheel"]
+	])
+	shortcuts_close_button = _add_button(content, "CLOSE", shortcuts_dialog.hide, "Return to the map (Escape)")
+	shortcuts_close_button.size_flags_horizontal = Control.SIZE_SHRINK_END
+	var escape_key := InputEventKey.new()
+	escape_key.keycode = KEY_ESCAPE
+	shortcuts_close_button.shortcut = Shortcut.new()
+	shortcuts_close_button.shortcut.events = [escape_key]
+	shortcuts_dialog.size = Vector2i(560, ceili(margin.get_combined_minimum_size().y))
+
+func _add_shortcut_group(parent: Control, heading: String, shortcuts: Array) -> void:
+	var group := VBoxContainer.new()
+	group.add_theme_constant_override("separation", 6)
+	parent.add_child(group)
+	group.add_child(_small_heading(heading))
+	var rows := GridContainer.new()
+	rows.columns = 2
+	rows.add_theme_constant_override("h_separation", 24)
+	rows.add_theme_constant_override("v_separation", 4)
+	group.add_child(rows)
+	for shortcut in shortcuts:
+		var description := _detail_label(shortcut[0], palette.paper)
+		description.custom_minimum_size.x = 300
+		description.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		rows.add_child(description)
+		if shortcut[1] is Array:
+			var keys := HBoxContainer.new()
+			keys.size_flags_horizontal = Control.SIZE_SHRINK_END
+			keys.add_theme_constant_override("separation", 6)
+			rows.add_child(keys)
+			for key in shortcut[1]:
+				if keys.get_child_count() > 0:
+					keys.add_child(_detail_label("+", palette.muted))
+				var keycap := PanelContainer.new()
+				var key_style := _button_style(palette.stage, palette.line, 1)
+				key_style.content_margin_left = 6
+				key_style.content_margin_right = 6
+				keycap.add_theme_stylebox_override("panel", key_style)
+				keys.add_child(keycap)
+				keycap.add_child(_detail_label(key, palette.paper))
+		else:
+			var gesture := _detail_label(shortcut[1], palette.muted)
+			gesture.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			rows.add_child(gesture)
+
+func _show_shortcuts() -> void:
+	shortcuts_dialog.popup_centered()
+
 func _build_dialogs() -> void:
+	_build_shortcuts_dialog()
+	error_dialog = AcceptDialog.new()
+	error_dialog.title = "Action failed"
+	error_dialog.exclusive = true
+	add_child(error_dialog)
 	new_map_confirmation = PopupPanel.new()
 	new_map_confirmation.exclusive = true
 	new_map_confirmation.wrap_controls = false
@@ -427,9 +511,6 @@ func _dialog(mode: FileDialog.FileMode, filters: Array[String]) -> FileDialog:
 	add_child(dialog)
 	return dialog
 
-func _on_asset_dropped() -> void:
-	_update_status("Piece placed — drag it between cells or drag another item onto the map")
-
 func _on_selection_changed(piece) -> void:
 	_set_piece_actions_enabled(piece != null)
 	if piece == null:
@@ -450,7 +531,6 @@ func _on_grid_selected(index: int) -> void:
 		canvas_mode = BattleMapCanvas.GRID_HIDDEN
 	map_canvas.set_grid_mode(canvas_mode)
 	_sync_grid_controls()
-	_update_status("Grid cue: %s" % grid_select.get_item_text(index))
 
 func _on_grid_opacity_changed(value: float) -> void:
 	map_canvas.set_grid_opacity(value)
@@ -467,10 +547,9 @@ func _on_builtin_landscape_selected(index: int) -> void:
 		"res://assets/landscapes/snow.png"
 	]
 	if not map_canvas.set_builtin_background(paths[index]):
-		_update_status("Could not load the selected built-in landscape")
+		_show_error("Could not load the selected built-in landscape")
 		return
 	_sync_grid_controls()
-	_update_status("Landscape: %s" % landscape_select.get_item_text(index))
 
 func _grid_dimension_input(initial_value: int) -> SpinBox:
 	var input := SpinBox.new()
@@ -492,12 +571,10 @@ func _on_manual_grid_changed(_value: float) -> void:
 func _add_grid() -> void:
 	if map_canvas.adjust_manual_grid(1):
 		_sync_manual_grid_inputs()
-		_update_status("Smaller squares: %d×%d grid" % [map_canvas.manual_grid_cells.x, map_canvas.manual_grid_cells.y])
 
 func _remove_grid() -> void:
 	if map_canvas.adjust_manual_grid(-1):
 		_sync_manual_grid_inputs()
-		_update_status("Bigger squares: %d×%d grid" % [map_canvas.manual_grid_cells.x, map_canvas.manual_grid_cells.y])
 
 func _sync_manual_grid_inputs() -> void:
 	grid_columns.set_value_no_signal(map_canvas.manual_grid_cells.x)
@@ -546,7 +623,6 @@ func _confirm_new_map() -> void:
 	map_canvas.clear_map()
 	_sync_grid_controls()
 	current_path = ""
-	_update_status("New empty stage")
 
 func _show_open() -> void:
 	open_dialog.popup_centered_ratio(0.72)
@@ -570,7 +646,7 @@ func _save_to_path(path: String) -> void:
 		path += ".battlemap"
 	var save_result := map_canvas.serialize_state()
 	if save_result.has("error"):
-		_update_status("Could not save: %s" % save_result["error"])
+		_show_error("Could not save: %s" % save_result["error"])
 		return
 	var absolute_path := ProjectSettings.globalize_path(path)
 	var temporary_path := "%s.%d.tmp" % [absolute_path, Time.get_ticks_usec()]
@@ -578,7 +654,7 @@ func _save_to_path(path: String) -> void:
 		temporary_path = "%s.%d.tmp" % [absolute_path, Time.get_ticks_usec()]
 	var file := FileAccess.open(temporary_path, FileAccess.WRITE)
 	if file == null:
-		_update_status("Could not save: %s" % FileAccess.get_open_error())
+		_show_error("Could not save: %s" % FileAccess.get_open_error())
 		return
 	file.store_string(JSON.stringify(save_result["data"], "\t"))
 	file.flush()
@@ -586,49 +662,42 @@ func _save_to_path(path: String) -> void:
 	file = null
 	if write_error != OK:
 		DirAccess.remove_absolute(temporary_path)
-		_update_status("Could not save: write error %s" % write_error)
+		_show_error("Could not save: write error %s" % write_error)
 		return
 	var rename_error := DirAccess.rename_absolute(temporary_path, absolute_path)
 	if rename_error != OK:
 		DirAccess.remove_absolute(temporary_path)
-		_update_status("Could not save: replace error %s" % rename_error)
+		_show_error("Could not save: replace error %s" % rename_error)
 		return
 	map_canvas.commit_saved_images(save_result["images"])
 	current_path = path
-	_update_status("Saved %s" % path.get_file())
 
 func _load_from_path(path: String) -> void:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
-		_update_status("Could not open: %s" % FileAccess.get_open_error())
+		_show_error("Could not open: %s" % FileAccess.get_open_error())
 		return
 	var data = JSON.parse_string(file.get_as_text())
 	if not data is Dictionary:
-		_update_status("This file is not a valid battle map")
+		_show_error("This file is not a valid battle map")
 		return
 	var load_error := map_canvas.load_state(data)
 	if not load_error.is_empty():
-		_update_status("Could not open battle map: %s" % load_error)
+		_show_error("Could not open battle map: %s" % load_error)
 		return
 	_sync_grid_controls()
 	_sync_manual_grid_inputs()
 	_sync_landscape_select()
 	grid_opacity.value = map_canvas.grid_opacity
 	current_path = path
-	_update_status("Opened %s" % path.get_file())
 
 func _import_background(path: String) -> void:
 	var result := map_canvas.set_background(path)
 	landscape_select.select(0)
 	_sync_grid_controls()
 	_sync_manual_grid_inputs()
-	if result.get("loaded", false) and result.get("found", false):
-		var cells: Vector2i = result["cells"]
-		_update_status("Detected %d×%d landscape grid — snapping uses its existing lines" % [cells.x, cells.y])
-	elif result.get("loaded", false):
-		_update_status("No reliable grid detected — using the editor overlay")
-	else:
-		_update_status("Could not load that landscape image")
+	if not result.get("loaded", false):
+		_show_error("Could not load that landscape image")
 
 func _sync_grid_controls() -> void:
 	var detected := map_canvas.has_detected_grid()
@@ -658,19 +727,14 @@ func _export_to_path(path: String) -> void:
 	if not path.to_lower().ends_with(".png"):
 		path += ".png"
 	var error := await map_canvas.export_visible_png(path)
-	if error == OK:
-		var export_size := Vector2i(map_canvas.background_texture.get_size()) if map_canvas.background_texture != null else Vector2i(map_canvas.size)
-		_update_status("Exported %s at %d×%d" % [path.get_file(), export_size.x, export_size.y])
-	else:
-		_update_status("PNG export failed with error %d" % error)
+	if error != OK:
+		_show_error("PNG export failed with error %d" % error)
 
 func _undo() -> void:
 	map_canvas.undo()
-	_update_status("Undid last stage change")
 
 func _redo() -> void:
 	map_canvas.redo()
-	_update_status("Redid stage change")
 
 func _rotate_left() -> void:
 	map_canvas.rotate_selected(-1)
@@ -691,6 +755,8 @@ func _refresh_actions() -> void:
 	_set_piece_actions_enabled(map_canvas.get_selected_piece() != null)
 
 func _unhandled_key_input(event: InputEvent) -> void:
+	if shortcuts_dialog.visible or error_dialog.visible:
+		return
 	if not event is InputEventKey or not event.pressed or event.echo:
 		return
 	if event.ctrl_pressed and event.keycode == KEY_S:
@@ -727,8 +793,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_rotate_right()
 		get_viewport().set_input_as_handled()
 
-func _update_status(message: String) -> void:
-	status_label.text = "  %s    |    Right-click Object Menu    Right-drag Pan    Wheel Zoom    Ctrl+0 Fit" % message
+func _show_error(message: String) -> void:
+	error_dialog.dialog_text = message
+	error_dialog.popup_centered()
 
 func _add_button(parent: Control, text: String, callback: Callable, tooltip: String) -> Button:
 	var button := Button.new()
@@ -763,11 +830,6 @@ func _add_piece_action(parent: Control, text: String, callback: Callable, toolti
 func _set_piece_actions_enabled(enabled: bool) -> void:
 	for button in piece_action_buttons:
 		button.disabled = not enabled
-
-func _add_spacer(parent: Control, width: float) -> void:
-	var spacer := Control.new()
-	spacer.custom_minimum_size.x = width
-	parent.add_child(spacer)
 
 func _title_label(text: String) -> Label:
 	var label := Label.new()
