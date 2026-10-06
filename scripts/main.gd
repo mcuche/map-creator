@@ -379,7 +379,14 @@ func _build_shortcuts_dialog() -> void:
 	var content := VBoxContainer.new()
 	content.add_theme_constant_override("separation", 14)
 	margin.add_child(content)
-	content.add_child(_section_title("SHORTCUTS"))
+	var header := HBoxContainer.new()
+	content.add_child(header)
+	var title := _section_title("SHORTCUTS")
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(title)
+	shortcuts_close_button = _add_button(header, "", shortcuts_dialog.hide, "Close shortcuts (Escape)")
+	shortcuts_close_button.icon = get_theme_icon("close", "Window")
+	shortcuts_close_button.custom_minimum_size = Vector2(32, 32)
 	_add_shortcut_group(content, "FILE", [
 		["Save map", ["Ctrl", "S"]],
 		["Open map", ["Ctrl", "O"]]
@@ -404,8 +411,6 @@ func _build_shortcuts_dialog() -> void:
 		["Pan the map", "Right-drag"],
 		["Zoom in / out", "Mouse wheel"]
 	])
-	shortcuts_close_button = _add_button(content, "CLOSE", shortcuts_dialog.hide, "Return to the map (Escape)")
-	shortcuts_close_button.size_flags_horizontal = Control.SIZE_SHRINK_END
 	var escape_key := InputEventKey.new()
 	escape_key.keycode = KEY_ESCAPE
 	shortcuts_close_button.shortcut = Shortcut.new()

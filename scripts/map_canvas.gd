@@ -280,9 +280,9 @@ func _notification(what: int) -> void:
 
 func _open_object_context_menu(local_position: Vector2) -> void:
 	var cell := _local_to_cell(local_position)
+	select_at(cell)
 	if not _editor.has_piece_at(cell):
 		return
-	select_at(cell)
 	context_menu.position = Vector2i(get_screen_position() + local_position)
 	context_menu.size = CONTEXT_MENU_SIZE
 	context_menu.popup()

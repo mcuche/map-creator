@@ -39,7 +39,7 @@ The responsive layout and UI scale checks are `res://tests/test_responsive_layou
 
 ## Shortcuts
 
-Use **SHORTCUTS** in the top menu to open the keyboard and mouse reference. Close it with **CLOSE** or **Escape**. The workspace has no footer; failures appear in a dismissible dialog.
+Use **SHORTCUTS** in the top menu to open the keyboard and mouse reference. Close it with the cross button in the top-right corner or **Escape**. The workspace has no footer; failures appear in a dismissible dialog.
 
 - Save — `Ctrl` + `S`
 - Open — `Ctrl` + `O`

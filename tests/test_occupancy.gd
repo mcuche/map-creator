@@ -164,10 +164,23 @@ func _test_context_selection() -> bool:
 	press.position = _cell_pointer(canvas, Vector2i.ZERO)
 	press.pressed = true
 	canvas._gui_input(press)
+	var motion := InputEventMouseMotion.new()
+	motion.relative = Vector2(20, 0)
+	motion.position = press.position + motion.relative
+	canvas._gui_input(motion)
 	press.pressed = false
 	canvas._gui_input(press)
 	if canvas.stage_view() != retained or canvas.context_menu.visible or counts != {"selection": 0, "state": 0}:
-		_fail("Right-clicking empty space changed selection or opened the object menu")
+		_fail("Right-dragging empty space changed selection or opened the object menu")
+		return false
+	press.pressed = true
+	canvas._gui_input(press)
+	press.pressed = false
+	canvas._gui_input(press)
+	if canvas.get_selected_piece() != null or canvas.context_menu.visible or counts != {"selection": 1, "state": 0} \
+			or canvas.stage_view()["pieces"] != retained["pieces"] \
+			or canvas.can_undo() != retained["can_undo"] or canvas.can_redo() != retained["can_redo"]:
+		_fail("Right-clicking empty space did not clear selection without editing pieces or opening the object menu")
 		return false
 	# The second occupied cell of a table must still select it and open its menu.
 	press.position = _cell_pointer(canvas, Vector2i(3, 2))
@@ -176,7 +189,7 @@ func _test_context_selection() -> bool:
 	press.pressed = false
 	canvas._gui_input(press)
 	if canvas.get_selected_piece() == null or canvas.get_selected_piece()["entry"]["id"] != "table" \
-			or not canvas.context_menu.visible or counts != {"selection": 1, "state": 0}:
+			or not canvas.context_menu.visible or counts != {"selection": 2, "state": 0}:
 		_fail("Right-clicking a piece did not select it and open its menu once")
 		return false
 	canvas.context_menu.hide()
@@ -186,7 +199,7 @@ func _test_context_selection() -> bool:
 	canvas._gui_input(press)
 	press.pressed = false
 	canvas._gui_input(press)
-	if canvas.get_selected_piece() != null or counts != {"selection": 2, "state": 0} \
+	if canvas.get_selected_piece() != null or counts != {"selection": 3, "state": 0} \
 			or canvas.stage_view()["pieces"] != retained["pieces"]:
 		_fail("Left-clicking empty space did not clear selection without editing pieces")
 		return false
