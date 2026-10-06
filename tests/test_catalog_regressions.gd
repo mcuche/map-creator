@@ -6,30 +6,6 @@ const MapCanvasScript = preload("res://scripts/map_canvas.gd")
 func _ready() -> void:
 	var canvas: BattleMapCanvas = MapCanvasScript.new()
 	add_child(canvas)
-	canvas.manual_grid_cells = Vector2i(4, 5)
-	var entry := {
-		"id": "custom", "name": "Custom", "group_id": "props",
-		"footprint": Vector2i(4, 5), "image_path": ""
-	}
-	canvas.pieces = [{
-		"instance_id": 1, "entry": entry, "cell": Vector2i.ZERO,
-		"rotation": 0, "mirrored": false, "layer": 0
-	}]
-	canvas.selected_id = 1
-	canvas.rotate_selected()
-	if canvas.pieces[0]["rotation"] != 0 or canvas.pieces[0]["cell"] != Vector2i.ZERO or canvas.can_undo():
-		_fail("Out-of-grid rotation changed the piece or undo history")
-		return
-	if canvas._can_occupy(Vector2i(-1, 0), Vector2i.ONE) or canvas._can_occupy(Vector2i(4, 0), Vector2i.ONE):
-		_fail("Occupancy accepted a rectangle outside the grid")
-		return
-	entry["footprint"] = Vector2i(3, 2)
-	canvas.pieces[0]["entry"] = entry
-	canvas.rotate_selected()
-	if canvas.pieces[0]["rotation"] != 90 or not canvas.can_undo():
-		_fail("Valid rotation was rejected")
-		return
-
 	var user_path := "user://piece-image-refresh-test-%d.png" % Time.get_ticks_usec()
 	var image_path := ProjectSettings.globalize_path(user_path)
 	var image_entry := {"image_path": image_path}

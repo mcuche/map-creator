@@ -25,13 +25,17 @@ func _ready() -> void:
 		_fail("Could not create prop fixture")
 		return
 	var entry := {"id": "prop", "name": "Prop", "group_id": "props", "footprint": Vector2i.ONE, "image_path": source_absolute}
-	canvas.pieces = [{"instance_id": 1, "entry": entry, "cell": Vector2i(2, 2), "rotation": 0, "mirrored": false, "layer": 0}]
+	canvas.place_piece(entry, Vector2i(2, 2))
 	canvas.grid_mode = BattleMapCanvas.GRID_HIDDEN
 	if canvas._texture_for_entry(entry) == null:
 		_fail("Could not cache displayed prop")
 		return
 	prop_image.fill(Color.BLUE)
 	prop_image.save_png(source_path)
+	canvas.begin_move(Vector2i(2, 2))
+	canvas.update_move(Vector2i(3, 2))
+	canvas.set_zoom(2.0)
+	var retained := canvas.stage_view()
 	for source_state in ["replaced", "deleted"]:
 		if source_state == "deleted":
 			DirAccess.remove_absolute(source_absolute)
@@ -40,9 +44,17 @@ func _ready() -> void:
 			_fail("Export failed with %s source: %d" % [source_state, error])
 			return
 		exported = Image.load_from_file(path)
-		var prop_pixel := exported.get_pixel(228, 240)
+		var prop_pixel := exported.get_pixel(320, 240)
 		if prop_pixel.r < 0.9 or prop_pixel.g > 0.1 or prop_pixel.b > 0.1:
 			_fail("Export did not retain displayed prop with %s source: %s" % [source_state, prop_pixel])
+			return
+		if canvas.stage_view() != retained or not is_equal_approx(canvas.zoom_level, 2.0):
+			_fail("Export changed the live editing state or camera")
+			return
+		# This pixel lies on the live selection outline; export must omit it.
+		var edge_pixel := exported.get_pixel(276, 195)
+		if edge_pixel.r > 0.8 and edge_pixel.g > 0.6 and edge_pixel.b < 0.6:
+			_fail("Export retained the selection outline")
 			return
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	print("Export test passed")

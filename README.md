@@ -16,6 +16,8 @@ A personal Windows desktop map-building tool for fantasy tabletop sessions, buil
 - Export the visible map stage as PNG
 - Scale the editor controls with a saved **UI Scale** choice in Stage Controls
 
+`StageEditor` owns placed pieces, selection, occupancy, movement transactions, and the bounded undo/redo history. `BattleMapCanvas` adapts pointer gestures and coordinates, draws snapshots, and owns grid configuration, images, persistence, and export. Grid, landscape, and camera settings remain outside piece history.
+
 Map files use version 3 with embedded piece images. Version 1 and version 2 prototype maps are no longer supported.
 
 ## Run
@@ -29,6 +31,8 @@ Do not use **F6** while a test file is selected: F6 runs the current scene or sc
 **UI Scale** offers Auto, 100%, 125%, 150%, and 200%. Auto uses the current monitor width on Windows. The editor may temporarily use a smaller scale when the window is too small to fit a 1280×720 workspace; your choice remains saved in `user://display_settings.cfg`.
 
 ## Tests
+
+Run the editor interface tests with `Godot --headless --path . --quit-after 1800 res://tests/test_stage_editor.tscn`. They cover editing rules, movement transactions, history, and layout replacement without a canvas.
 
 Run the occupancy test through its scene wrapper, `res://tests/test_occupancy.tscn`, rather than running `test_occupancy.gd` directly. The occupancy scene runs headlessly and checks that PNG export returns `ERR_UNAVAILABLE` there. Run `res://tests/test_export.tscn` with a renderer to verify successful PNG output and its dimensions.
 The responsive layout and UI scale checks are `res://tests/test_responsive_layout.tscn` and `res://tests/test_ui_scale.tscn`.

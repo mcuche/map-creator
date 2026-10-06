@@ -42,13 +42,8 @@ func _run() -> void:
 	canvas.grid_mode = BattleMapCanvas.GRID_HIDDEN
 	canvas.manual_grid_cells = Vector2i.ONE
 	canvas.piece_textures["test"] = ImageTexture.create_from_image(image)
-	canvas.pieces = [{
-		"instance_id": 1,
-		"cell": Vector2i.ZERO,
-		"rotation": 0,
-		"mirrored": false,
-		"entry": {"image_path": "test", "footprint": Vector2i.ONE}
-	}]
+	canvas.place_piece({"image_path": "test", "footprint": Vector2i.ONE}, Vector2i.ZERO)
+	canvas.select_at(Vector2i(-1, -1))
 	viewport.add_child(canvas)
 	canvas.custom_minimum_size = Vector2.ZERO
 	canvas.size = Vector2(80, 80)

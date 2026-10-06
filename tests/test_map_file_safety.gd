@@ -7,6 +7,8 @@ func _ready() -> void:
 	var main: Control = MainScript.new()
 	add_child(main)
 	var canvas: BattleMapCanvas = main.map_canvas
+	if not _test_shortcuts_and_roundtrip(main, canvas):
+		return
 	var folder := "user://map-file-safety-%d" % Time.get_ticks_usec()
 	var absolute_folder := ProjectSettings.globalize_path(folder)
 	if DirAccess.make_dir_recursive_absolute(absolute_folder) != OK:
@@ -33,16 +35,12 @@ func _ready() -> void:
 		_fail("Failed temporary write changed the previous map or did not display its error")
 		return
 	var entry := {"id": "knight", "name": "Knight", "group_id": "cast", "footprint": Vector2i.ONE, "image_path": ""}
-	canvas.pieces = [{"instance_id": 1, "entry": entry, "cell": Vector2i(2, 2), "rotation": 0, "mirrored": false, "layer": 0}]
-	canvas.selected_id = 1
-	canvas.undo_stack = [{"pieces": [], "selected_id": -1, "next_id": 1}]
-	canvas.redo_stack = [{"pieces": [], "selected_id": -1, "next_id": 1}]
-	var retained_pieces := canvas.pieces.duplicate(true)
-	var retained_undo := canvas.undo_stack.duplicate(true)
-	var retained_redo := canvas.redo_stack.duplicate(true)
+	canvas.place_piece(entry, Vector2i(2, 2))
+	canvas.mirror_selected()
+	canvas.undo()
+	var retained_pieces: Array = canvas.stage_view()["pieces"]
 	var retained_grid := canvas.manual_grid_cells
 	var retained_grid_mode := canvas.grid_mode
-	var retained_next_id := canvas.next_id
 	var save_result := canvas.serialize_state()
 	if save_result.has("error"):
 		_fail("Could not serialize the current map: %s" % save_result["error"])
@@ -76,16 +74,26 @@ func _ready() -> void:
 		if not _dismiss_error(main, expected_error):
 			_fail("Rejected map did not display its error")
 			return
-		if main.current_path != path or canvas.pieces != retained_pieces or canvas.selected_id != 1 \
-				or canvas.manual_grid_cells != retained_grid or canvas.grid_mode != retained_grid_mode \
-				or canvas.next_id != retained_next_id or canvas.undo_stack != retained_undo or canvas.redo_stack != retained_redo:
+		if main.current_path != path or canvas.stage_view()["pieces"] != retained_pieces or canvas.stage_view()["selected_id"] != 1 \
+				or canvas.manual_grid_cells != retained_grid or canvas.grid_mode != retained_grid_mode:
 			_fail("Rejected map %d changed the open stage" % index)
 			return
+		# Exercise both directions, proving rejected loads preserve usable history.
+		canvas.redo()
+		if not canvas.get_selected_piece()["mirrored"]:
+			_fail("Rejected map destroyed redo")
+			return
+		canvas.undo()
+		canvas.undo()
+		if not canvas.stage_view()["pieces"].is_empty():
+			_fail("Rejected map destroyed undo")
+			return
+		canvas.redo()
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(invalid_path))
-	if not canvas.load_state({"version": 3, "pieces": [], "images": {}}).is_empty() or not canvas.pieces.is_empty():
+	if not canvas.load_state({"version": 3, "pieces": [], "images": {}}).is_empty() or not canvas.stage_view()["pieces"].is_empty():
 		_fail("Valid empty map was rejected")
 		return
-	if not canvas.load_state(valid).is_empty() or canvas.pieces != retained_pieces:
+	if not canvas.load_state(valid).is_empty() or canvas.stage_view()["pieces"] != retained_pieces:
 		_fail("Valid map was rejected")
 		return
 	var image_path := absolute_folder.path_join("piece.png")
@@ -95,17 +103,16 @@ func _ready() -> void:
 		_fail("Could not create portable map image")
 		return
 	entry["image_path"] = image_path
-	canvas.pieces = [
-		{"instance_id": 1, "entry": entry, "cell": Vector2i(2, 2), "rotation": 0, "mirrored": false, "layer": 0},
-		{"instance_id": 2, "entry": entry, "cell": Vector2i(3, 2), "rotation": 0, "mirrored": false, "layer": 1}
-	]
+	canvas.clear_map()
+	canvas.place_piece(entry, Vector2i(2, 2))
+	canvas.place_piece(entry, Vector2i(3, 2))
 	main._save_to_path(path)
 	var portable = JSON.parse_string(FileAccess.get_file_as_string(path))
 	if not portable is Dictionary or portable.get("version") != 3 or portable["images"].size() != 1:
 		_fail("Save did not embed the shared image once")
 		return
 	# The image currently displayed must win over a changed source file.
-	canvas._texture_for_entry(canvas.pieces[0]["entry"])
+	canvas._texture_for_entry(canvas.stage_view()["pieces"][0]["entry"])
 	image.fill(Color.BLUE)
 	image.save_png(image_path)
 	main._save_to_path(path)
@@ -116,32 +123,39 @@ func _ready() -> void:
 		return
 	var portable_bytes := FileAccess.get_file_as_bytes(path)
 	DirAccess.remove_absolute(image_path)
-	canvas.pieces[1]["cell"] = Vector2i(4, 2)
+	canvas.begin_move(Vector2i(3, 2))
+	canvas.update_move(Vector2i(4, 2))
+	canvas.finish_move()
 	main._save_to_path(path)
 	if main.error_dialog.visible or FileAccess.get_file_as_bytes(path) == portable_bytes:
 		_fail("Second save without reopening lost the committed image")
 		return
 	main._load_from_path(path)
-	var restored_texture := canvas._texture_for_entry(canvas.pieces[0]["entry"])
-	if canvas.pieces.size() != 2 or canvas.pieces[1]["cell"] != Vector2i(4, 2) or restored_texture == null or restored_texture.get_image().get_pixel(0, 0) != Color.RED:
+	var restored_texture := canvas._texture_for_entry(canvas.stage_view()["pieces"][0]["entry"])
+	if canvas.stage_view()["pieces"].size() != 2 or canvas.stage_view()["pieces"][1]["cell"] != Vector2i(4, 2) or restored_texture == null or restored_texture.get_image().get_pixel(0, 0) != Color.RED:
 		_fail("Map did not restore its image after the PNG was removed")
 		return
-	canvas.pieces[0]["cell"] = Vector2i(1, 2)
+	canvas.begin_move(Vector2i(2, 2))
+	canvas.update_move(Vector2i(1, 2))
+	canvas.finish_move()
 	main._save_to_path(path)
 	var resaved = JSON.parse_string(FileAccess.get_file_as_string(path))
 	if main.error_dialog.visible or not resaved is Dictionary or resaved["pieces"][0]["cell_x"] != 1:
 		_fail("Map could not be saved again after the PNG was removed")
 		return
 	var new_image_path := absolute_folder.path_join("missing.png")
-	canvas.pieces[0]["entry"]["image_path"] = new_image_path
+	var missing_entry := entry.duplicate(true)
+	missing_entry["image_path"] = new_image_path
+	canvas.place_piece(missing_entry, Vector2i(6, 2))
+	var intact_stage := canvas.stage_view()
 	var intact_bytes := FileAccess.get_file_as_bytes(path)
 	main._save_to_path(path)
-	if not _dismiss_error(main, "Could not save") or FileAccess.get_file_as_bytes(path) != intact_bytes:
+	if not _dismiss_error(main, "Could not save") or FileAccess.get_file_as_bytes(path) != intact_bytes or canvas.stage_view() != intact_stage:
 		_fail("Unrecoverable image replaced the previous map")
 		return
-	canvas.pieces[0]["entry"]["image_path"] = image_path
+	canvas.delete_selected()
 	portable["images"].erase(image_path)
-	if canvas.load_state(portable).is_empty() or canvas.pieces.size() != 2:
+	if canvas.load_state(portable).is_empty() or canvas.stage_view()["pieces"].size() != 2:
 		_fail("Invalid embedded image changed the open map")
 		return
 	var large_dir := folder.path_join("large-catalog")
@@ -175,7 +189,8 @@ func _ready() -> void:
 	if not catalog.initialize(catalog_path)["ok"]:
 		_fail("Catalog rejected a PNG between 2 and 20 MiB")
 		return
-	canvas.pieces = [{"instance_id": 1, "entry": {"id": "large", "name": "Large", "group_id": "props", "footprint": Vector2i.ONE, "image_path": ProjectSettings.globalize_path(large_path)}, "cell": Vector2i.ZERO, "rotation": 0, "mirrored": false, "layer": 0}]
+	canvas.clear_map()
+	canvas.place_piece({"id": "large", "name": "Large", "group_id": "props", "footprint": Vector2i.ONE, "image_path": ProjectSettings.globalize_path(large_path)}, Vector2i.ZERO)
 	main._save_to_path(path)
 	var reduced = JSON.parse_string(FileAccess.get_file_as_string(path))
 	var reduced_bytes := Marshalls.base64_to_raw(reduced["images"][ProjectSettings.globalize_path(large_path)])
@@ -188,10 +203,10 @@ func _ready() -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(large_path))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(large_dir.path_join("images")))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(large_dir))
-	canvas.undo_stack = [{"pieces": [], "selected_id": -1, "next_id": 1}]
-	canvas.redo_stack = [{"pieces": [], "selected_id": -1, "next_id": 1}]
+	canvas.mirror_selected()
+	canvas.undo()
 	main._confirm_new_map()
-	if not canvas.pieces.is_empty() or not canvas.embedded_images.is_empty() or not canvas.piece_textures.is_empty() or canvas.can_undo() or canvas.can_redo():
+	if not canvas.stage_view()["pieces"].is_empty() or not canvas.embedded_images.is_empty() or not canvas.piece_textures.is_empty() or canvas.can_undo() or canvas.can_redo():
 		_fail("New Map retained pieces, images, or history")
 		return
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(blocked_path))
@@ -208,3 +223,65 @@ func _dismiss_error(main: Control, expected_message: String) -> bool:
 func _fail(message: String) -> void:
 	push_error(message)
 	get_tree().quit(1)
+
+func _test_shortcuts_and_roundtrip(main: Control, canvas: BattleMapCanvas) -> bool:
+	canvas.place_piece({"id": "table", "name": "Table", "footprint": Vector2i(2, 1)}, Vector2i(2, 2))
+	if main.selection_name.text != "Table" or main.piece_action_buttons[0].disabled:
+		_fail("Placement did not enable selection controls")
+		return false
+	_key(main, KEY_R)
+	if canvas.get_selected_piece()["rotation"] != 90:
+		_fail("Root rotation shortcut did not reach the canvas")
+		return false
+	_key(main, KEY_R, false, true)
+	if canvas.get_selected_piece()["rotation"] != 0:
+		_fail("Root counterclockwise shortcut failed")
+		return false
+	_key(main, KEY_D, true)
+	if canvas.stage_view()["pieces"].size() != 2:
+		_fail("Root duplicate shortcut failed")
+		return false
+	_key(main, KEY_DELETE)
+	if canvas.stage_view()["pieces"].size() != 1 or main.selection_name.text != "Nothing selected" or not main.piece_action_buttons[0].disabled:
+		_fail("Root delete shortcut did not clear selection controls")
+		return false
+	_key(main, KEY_Z, true)
+	if canvas.stage_view()["pieces"].size() != 2 or main.piece_action_buttons[0].disabled:
+		_fail("Root undo shortcut did not restore selection controls")
+		return false
+	_key(main, KEY_Y, true)
+	if canvas.stage_view()["pieces"].size() != 1:
+		_fail("Root redo shortcut failed")
+		return false
+	canvas.select_at(Vector2i(2, 2))
+	canvas.rotate_selected()
+	canvas.mirror_selected()
+	canvas.place_piece({"id": "square", "footprint": Vector2i(2, 2)}, Vector2i(5, 5))
+	var expected: Array = canvas.stage_view()["pieces"]
+	var saved: Dictionary = canvas.serialize_state()["data"]
+	if saved["pieces"][0].has("occupied_footprint") or not canvas.load_state(saved).is_empty() or canvas.stage_view()["pieces"] != expected \
+			or canvas.get_selected_piece() != null or canvas.can_undo() or canvas.can_redo():
+		_fail("Version 3 round-trip changed footprints, order, rotation, mirroring, or editing state")
+		return false
+	# Wire and native validation must both leave a pending move untouched.
+	canvas.begin_move(Vector2i(2, 2))
+	canvas.update_move(Vector2i(3, 2))
+	var pending := canvas.stage_view()
+	var invalid := saved.duplicate(true)
+	invalid["pieces"][0]["cell_x"] = -1
+	if canvas.load_state(invalid) != "pieces[0] is outside the grid." or canvas.stage_view() != pending:
+		_fail("Native layout rejection changed a pending movement")
+		return false
+	if canvas.load_state({}).is_empty() or canvas.stage_view() != pending:
+		_fail("Wire layout rejection changed a pending movement")
+		return false
+	canvas.clear_map()
+	return true
+
+func _key(main: Control, keycode: Key, ctrl := false, shift := false) -> void:
+	var event := InputEventKey.new()
+	event.pressed = true
+	event.keycode = keycode
+	event.ctrl_pressed = ctrl
+	event.shift_pressed = shift
+	main._unhandled_key_input(event)

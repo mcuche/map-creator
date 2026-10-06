@@ -29,13 +29,12 @@ const MAP_FILE_VERSION := 3
 const MAX_EMBEDDED_IMAGE_BYTES := 2 * 1024 * 1024
 const MAX_EMBEDDED_IMAGES_BYTES := 32 * 1024 * 1024
 const MAX_EMBEDDED_IMAGE_DIMENSION := 4096
+const StageEditorScript = preload("res://scripts/stage_editor.gd")
 const GridDetectorScript = preload("res://scripts/grid_detector.gd")
 
 var piece_textures := {}
 var embedded_images := {}
-var pieces: Array = []
-var selected_id := -1
-var next_id := 1
+var _editor: StageEditor = StageEditorScript.new()
 var grid_mode := GRID_SQUARE
 var grid_opacity := 0.30
 var grid_color := Color(0.95, 0.91, 0.76, 1.0)
@@ -50,12 +49,6 @@ var detected_grid_confidence := 0.0
 var zoom_level := 1.0
 var view_offset := Vector2.ZERO
 
-var undo_stack: Array = []
-var redo_stack: Array = []
-var dragging := false
-var drag_offset := Vector2i.ZERO
-var drag_start_position := Vector2i.ZERO
-var drag_before: Dictionary = {}
 var panning := false
 var right_press_position := Vector2.ZERO
 var right_pan_moved := false
@@ -117,6 +110,7 @@ func _context_row_style(background: Color, border: Color) -> StyleBoxFlat:
 func set_background(path: String) -> Dictionary:
 	var loaded := Image.load_from_file(path)
 	if not loaded.is_empty():
+		var edit_result := _editor.finish_move()
 		reset_zoom()
 		background_texture = ImageTexture.create_from_image(loaded)
 		background_path = path
@@ -131,50 +125,51 @@ func set_background(path: String) -> Dictionary:
 		else:
 			_clear_detected_grid()
 			grid_mode = GRID_SQUARE
-		queue_redraw()
-		state_changed.emit()
+		_publish_configuration_change(edit_result)
 		grid_detection_finished.emit(detection)
 		return detection.merged({"loaded": true})
 	return {"loaded": false, "found": false, "reason": "Image could not be loaded"}
 
 func set_builtin_background(path: String) -> bool:
 	if path.is_empty():
+		var edit_result := _editor.finish_move()
 		reset_zoom()
 		background_texture = null
 		background_path = ""
 		_clear_detected_grid()
 		grid_mode = GRID_SQUARE
-		queue_redraw()
-		state_changed.emit()
+		_publish_configuration_change(edit_result)
 		return true
 	var texture := load(path) as Texture2D
 	if texture == null:
 		return false
+	var edit_result := _editor.finish_move()
 	reset_zoom()
 	background_texture = texture
 	background_path = path
 	_clear_detected_grid()
 	grid_mode = GRID_SQUARE
-	queue_redraw()
-	state_changed.emit()
+	_publish_configuration_change(edit_result)
 	return true
 
 func set_grid_mode(mode: int) -> void:
+	var edit_result := _editor.finish_move()
 	if has_detected_grid():
 		grid_mode = GRID_DETECTED
 	else:
 		grid_mode = GRID_HIDDEN if mode == GRID_HIDDEN else GRID_SQUARE
-	queue_redraw()
-	state_changed.emit()
+	_publish_configuration_change(edit_result)
 
 func set_grid_opacity(value: float) -> void:
+	var result := _editor.finish_move()
 	grid_opacity = clampf(value, 0.05, 0.75)
-	queue_redraw()
+	result["redraw"] = true
+	_apply_edit_result(result)
 
 func set_grid_color(value: Color) -> void:
+	var edit_result := _editor.finish_move()
 	grid_color = Color(value.r, value.g, value.b, 1.0)
-	queue_redraw()
-	state_changed.emit()
+	_publish_configuration_change(edit_result)
 
 func set_manual_grid_size(columns: int, rows: int) -> bool:
 	if has_detected_grid():
@@ -183,15 +178,13 @@ func set_manual_grid_size(columns: int, rows: int) -> bool:
 		clampi(columns, MIN_MANUAL_GRID_SIZE, MAX_MANUAL_GRID_SIZE),
 		clampi(rows, MIN_MANUAL_GRID_SIZE, MAX_MANUAL_GRID_SIZE)
 	)
-	for piece in pieces:
-		var footprint := _piece_footprint(piece)
-		var cell: Vector2i = piece["cell"]
-		if cell.x + footprint.x > requested.x or cell.y + footprint.y > requested.y:
-			action_rejected.emit("Grid cannot be reduced because an object would fall outside it")
-			return false
+	var required: Vector2i = _editor.view()["required_cells"]
+	if required.x > requested.x or required.y > requested.y:
+		action_rejected.emit("Grid cannot be reduced because an object would fall outside it")
+		return false
+	var edit_result := _editor.finish_move()
 	manual_grid_cells = requested
-	queue_redraw()
-	state_changed.emit()
+	_publish_configuration_change(edit_result)
 	return true
 
 func manual_cell_aspect_ratio() -> float:
@@ -207,12 +200,8 @@ func closest_ideal_manual_grid(direction: int) -> Vector2i:
 	var step_direction := signi(direction)
 	if step_direction == 0:
 		return manual_grid_cells
-	var minimum := Vector2i(MIN_MANUAL_GRID_SIZE, MIN_MANUAL_GRID_SIZE)
-	for piece in pieces:
-		var footprint := _piece_footprint(piece)
-		var cell: Vector2i = piece["cell"]
-		minimum.x = maxi(minimum.x, cell.x + footprint.x)
-		minimum.y = maxi(minimum.y, cell.y + footprint.y)
+	var required: Vector2i = _editor.view()["required_cells"]
+	var minimum := Vector2i(maxi(MIN_MANUAL_GRID_SIZE, required.x), maxi(MIN_MANUAL_GRID_SIZE, required.y))
 	var column_start := manual_grid_cells.x + step_direction
 	var row_start := manual_grid_cells.y + step_direction
 	var column_end := MAX_MANUAL_GRID_SIZE if step_direction > 0 else minimum.x
@@ -267,32 +256,9 @@ func _gui_input(event: InputEvent) -> void:
 		elif event.button_index == MOUSE_BUTTON_LEFT:
 			var cell := _local_to_cell(event.position)
 			if event.pressed:
-				var hit = _piece_at(cell)
-				if hit != null:
-					selected_id = hit["instance_id"]
-					dragging = true
-					drag_offset = cell - hit["cell"]
-					drag_start_position = hit["cell"]
-					drag_before = _snapshot()
-					selection_changed.emit(hit)
-				else:
-					selected_id = -1
-					selection_changed.emit(null)
-				queue_redraw()
+				begin_move(cell)
 			else:
-				if dragging:
-					var selected = get_selected_piece()
-					if selected != null and selected["cell"] != drag_start_position:
-						if _can_occupy(selected["cell"], _piece_footprint(selected), selected_id):
-							undo_stack.append(drag_before)
-							redo_stack.clear()
-							state_changed.emit()
-						else:
-							selected["cell"] = drag_start_position
-							selection_changed.emit(selected)
-							action_rejected.emit("That space is already occupied")
-				dragging = false
-				queue_redraw()
+				finish_move()
 			accept_event()
 	elif event is InputEventMouseMotion:
 		if panning:
@@ -304,23 +270,19 @@ func _gui_input(event: InputEvent) -> void:
 				_clamp_view_offset()
 				queue_redraw()
 			accept_event()
-		elif dragging:
-			var selected = get_selected_piece()
-			if selected != null:
-				var target := _clamp_cell(_local_to_cell(event.position) - drag_offset, _piece_footprint(selected))
-				if _can_occupy(target, _piece_footprint(selected), selected_id):
-					selected["cell"] = target
-					selection_changed.emit(selected)
-					queue_redraw()
+		elif _editor.view()["moving"]:
+			update_move(_local_to_cell(event.position))
 			accept_event()
 
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		finish_move()
+
 func _open_object_context_menu(local_position: Vector2) -> void:
-	var hit = _piece_at(_local_to_cell(local_position))
-	if hit == null:
+	var cell := _local_to_cell(local_position)
+	if not _editor.has_piece_at(cell):
 		return
-	selected_id = int(hit["instance_id"])
-	selection_changed.emit(hit)
-	queue_redraw()
+	select_at(cell)
 	context_menu.position = Vector2i(get_screen_position() + local_position)
 	context_menu.size = CONTEXT_MENU_SIZE
 	context_menu.popup()
@@ -368,157 +330,92 @@ func _can_drop_data(at_position: Vector2, data: Variant) -> bool:
 	var entry = data.get("entry", null)
 	if not entry is Dictionary or not entry.get("footprint", null) is Vector2i:
 		return false
-	var footprint: Vector2i = entry["footprint"]
-	if footprint.x > _active_map_cells().x or footprint.y > _active_map_cells().y:
-		return false
-	var target := _drop_target_cell(at_position, footprint)
-	return _can_occupy(target, footprint)
+	return _editor.preview_placement(entry, _drop_target_cell(at_position, entry["footprint"]), _active_map_cells())["valid"]
 
 func _drop_data(at_position: Vector2, data: Variant) -> void:
+	if not data is Dictionary:
+		return
 	var entry = data.get("entry", null)
 	if not entry is Dictionary or not entry.get("footprint", null) is Vector2i:
 		return
-	var footprint: Vector2i = entry["footprint"]
-	if footprint.x > _active_map_cells().x or footprint.y > _active_map_cells().y:
-		action_rejected.emit("That piece is larger than the current grid")
-		return
-	var cell := _drop_target_cell(at_position, footprint)
-	_place_piece(entry, cell)
+	place_piece(entry, _drop_target_cell(at_position, entry["footprint"]))
 
 func _drop_target_cell(at_position: Vector2, footprint: Vector2i) -> Vector2i:
-	var centered := _local_to_cell(at_position) - Vector2i(floori(footprint.x / 2.0), floori(footprint.y / 2.0))
-	return _clamp_cell(centered, footprint)
+	return _local_to_cell(at_position) - Vector2i(floori(footprint.x / 2.0), floori(footprint.y / 2.0))
 
-func _place_piece(entry: Dictionary, cell: Vector2i) -> void:
-	var snapshot := _normalized_entry_snapshot(entry)
-	var footprint: Vector2i = snapshot["footprint"]
-	var target_cell := _clamp_cell(cell, footprint)
-	if not _can_occupy(target_cell, footprint):
-		action_rejected.emit("That space is already occupied")
-		return
-	_push_undo()
-	var piece := {
-		"instance_id": next_id,
-		"entry": snapshot,
-		"cell": target_cell,
-		"rotation": 0,
-		"mirrored": false,
-		"layer": pieces.size()
-	}
-	next_id += 1
-	pieces.append(piece)
-	selected_id = piece["instance_id"]
-	selection_changed.emit(piece)
-	placement_finished.emit()
-	state_changed.emit()
-	queue_redraw()
+func _apply_edit_result(result: Dictionary) -> void:
+	if result["selection_changed"]:
+		selection_changed.emit(get_selected_piece())
+	if result["placement_finished"]:
+		placement_finished.emit()
+	if result["document_changed"]:
+		state_changed.emit()
+	if not result["message"].is_empty():
+		action_rejected.emit(result["message"])
+	if result["redraw"]:
+		queue_redraw()
+
+func stage_view() -> Dictionary:
+	return _editor.view()
+
+func place_piece(entry: Dictionary, cell: Vector2i) -> void:
+	_apply_edit_result(_editor.place(entry, cell, _active_map_cells()))
+
+func select_at(cell: Vector2i) -> void:
+	_apply_edit_result(_editor.select_at(cell))
+
+func begin_move(cell: Vector2i) -> void:
+	_apply_edit_result(_editor.begin_move(cell))
+
+func update_move(cell: Vector2i) -> void:
+	_apply_edit_result(_editor.update_move(cell, _active_map_cells()))
+
+func finish_move() -> void:
+	_apply_edit_result(_editor.finish_move())
 
 func delete_selected() -> void:
-	if selected_id < 0:
-		return
-	_push_undo()
-	for index in range(pieces.size() - 1, -1, -1):
-		if pieces[index]["instance_id"] == selected_id:
-			pieces.remove_at(index)
-			break
-	selected_id = -1
-	selection_changed.emit(null)
-	state_changed.emit()
-	queue_redraw()
+	_apply_edit_result(_editor.delete_selected())
 
 func duplicate_selected() -> void:
-	var selected = get_selected_piece()
-	if selected == null:
-		return
-	var copy = selected.duplicate(true)
-	copy["instance_id"] = next_id
-	var target_cell := _find_nearest_free_cell(copy["cell"] + Vector2i.ONE, _piece_footprint(copy))
-	if target_cell.x < 0:
-		action_rejected.emit("No free space is available for a duplicate")
-		return
-	_push_undo()
-	next_id += 1
-	copy["cell"] = target_cell
-	copy["layer"] = pieces.size()
-	pieces.append(copy)
-	selected_id = copy["instance_id"]
-	selection_changed.emit(copy)
-	state_changed.emit()
-	queue_redraw()
+	_apply_edit_result(_editor.duplicate_selected(_active_map_cells()))
 
 func rotate_selected(direction: int = 1) -> void:
-	var selected = get_selected_piece()
-	if selected == null:
-		return
-	var previous_rotation := int(selected["rotation"])
-	var next_rotation := posmod(previous_rotation + 90 * signi(direction), 360)
-	var footprint: Vector2i = selected["entry"].get("footprint", Vector2i.ONE)
-	if next_rotation % 180 != 0:
-		footprint = Vector2i(footprint.y, footprint.x)
-	if footprint.x > _active_map_cells().x or footprint.y > _active_map_cells().y:
-		action_rejected.emit("The rotated object would fall outside the grid")
-		return
-	var target_cell := _clamp_cell(selected["cell"], footprint)
-	if not _can_occupy(target_cell, footprint, selected_id):
-		action_rejected.emit("The rotated object would overlap another object")
-		return
-	_push_undo()
-	selected["rotation"] = next_rotation
-	selected["cell"] = target_cell
-	selection_changed.emit(selected)
-	state_changed.emit()
-	queue_redraw()
+	_apply_edit_result(_editor.rotate_selected(direction, _active_map_cells()))
 
 func mirror_selected() -> void:
-	var selected = get_selected_piece()
-	if selected == null:
-		return
-	_push_undo()
-	selected["mirrored"] = not bool(selected.get("mirrored", false))
-	selection_changed.emit(selected)
-	state_changed.emit()
-	queue_redraw()
+	_apply_edit_result(_editor.mirror_selected())
 
 func get_selected_piece():
-	for piece in pieces:
-		if piece["instance_id"] == selected_id:
-			return piece
-	return null
+	return _editor.view()["selected_piece"]
 
 func undo() -> void:
-	if undo_stack.is_empty():
-		return
-	redo_stack.append(_snapshot())
-	_restore_snapshot(undo_stack.pop_back())
+	_apply_edit_result(_editor.undo())
 
 func redo() -> void:
-	if redo_stack.is_empty():
-		return
-	undo_stack.append(_snapshot())
-	_restore_snapshot(redo_stack.pop_back())
+	_apply_edit_result(_editor.redo())
 
 func can_undo() -> bool:
-	return not undo_stack.is_empty()
+	return _editor.view()["can_undo"]
 
 func can_redo() -> bool:
-	return not redo_stack.is_empty()
+	return _editor.view()["can_redo"]
 
 func clear_map() -> void:
-	pieces.clear()
+	var result := _editor.clear()
 	embedded_images.clear()
 	piece_textures.clear()
-	undo_stack.clear()
-	redo_stack.clear()
-	selected_id = -1
-	next_id = 1
-	selection_changed.emit(null)
-	state_changed.emit()
-	queue_redraw()
+	# New Map also clears canvas-owned image state.
+	_publish_configuration_change(result)
+
+func _publish_configuration_change(result: Dictionary) -> void:
+	result["document_changed"] = true
+	result["redraw"] = true
+	_apply_edit_result(result)
 
 func _serialize_layout() -> Dictionary:
 	var serialized: Array = []
-	for piece in pieces:
-		var entry: Dictionary = piece.get("entry", _missing_entry_snapshot("missing"))
+	for piece in _editor.view()["pieces"]:
+		var entry: Dictionary = piece["entry"]
 		var footprint: Vector2i = entry.get("footprint", Vector2i.ONE)
 		serialized.append({
 			"instance_id": piece["instance_id"],
@@ -560,7 +457,7 @@ func serialize_state() -> Dictionary:
 	var images := {}
 	var snapshots := {}
 	var total_bytes := 0
-	for piece in pieces:
+	for piece in _editor.view()["pieces"]:
 		var entry: Dictionary = piece.get("entry", {})
 		var path := str(entry.get("image_path", ""))
 		if path.is_empty() or images.has(path):
@@ -610,16 +507,24 @@ func load_state(data: Dictionary) -> String:
 	var images := {}
 	for path in data["images"]:
 		images[path] = Marshalls.base64_to_raw(data["images"][path])
-	_restore_layout(data, images)
+	var native_pieces: Array = []
+	for item in data["pieces"]:
+		native_pieces.append({"instance_id": int(item["instance_id"]),
+			"entry": _entry_snapshot_from_saved_piece(item),
+			"cell": Vector2i(int(item["cell_x"]), int(item["cell_y"])),
+			"rotation": int(item.get("rotation", 0)), "mirrored": item.get("mirrored", false),
+			"layer": int(item.get("layer", native_pieces.size()))})
+	var result := _editor.replace_layout(native_pieces, _saved_bounds(data))
+	if not result["message"].is_empty():
+		return result["message"]
+	_restore_rendering_state(data, images)
+	_publish_configuration_change(result)
 	return ""
 
-func _restore_layout(data: Dictionary, images: Dictionary) -> void:
+func _restore_rendering_state(data: Dictionary, images: Dictionary) -> void:
 	reset_zoom()
 	embedded_images = images.duplicate(true)
 	piece_textures.clear()
-	pieces.clear()
-	selected_id = -1
-	next_id = 1
 	var saved_grid_mode := int(data.get("grid_mode", GRID_SQUARE))
 	grid_mode = saved_grid_mode if saved_grid_mode in [GRID_SQUARE, GRID_DETECTED, GRID_HIDDEN] else GRID_SQUARE
 	grid_opacity = float(data.get("grid_opacity", 0.30))
@@ -649,25 +554,6 @@ func _restore_layout(data: Dictionary, images: Dictionary) -> void:
 		grid_mode = GRID_DETECTED
 	elif grid_mode == GRID_DETECTED:
 		grid_mode = GRID_SQUARE
-	for item in data.get("pieces", []):
-		if not item is Dictionary:
-			continue
-		var entry := _entry_snapshot_from_saved_piece(item)
-		var piece := {
-			"instance_id": int(item.get("instance_id", next_id)),
-			"entry": entry,
-			"cell": Vector2i(int(item.get("cell_x", 0)), int(item.get("cell_y", 0))),
-			"rotation": int(item.get("rotation", 0)),
-			"mirrored": bool(item.get("mirrored", false)),
-			"layer": int(item.get("layer", pieces.size()))
-		}
-		pieces.append(piece)
-		next_id = maxi(next_id, int(piece["instance_id"]) + 1)
-	undo_stack.clear()
-	redo_stack.clear()
-	selection_changed.emit(null)
-	state_changed.emit()
-	queue_redraw()
 
 func _validate_saved_state(data: Dictionary) -> String:
 	if not data.has("version") or not _saved_integer(data["version"]) or int(data["version"]) != MAP_FILE_VERSION:
@@ -702,16 +588,6 @@ func _validate_saved_state(data: Dictionary) -> String:
 		return "grid_color must be a string."
 	if data.has("background_path") and not data["background_path"] is String:
 		return "background_path must be a string."
-	var columns := clampi(int(data.get("manual_grid_columns", DEFAULT_MAP_CELLS.x)), MIN_MANUAL_GRID_SIZE, MAX_MANUAL_GRID_SIZE)
-	var rows := clampi(int(data.get("manual_grid_rows", DEFAULT_MAP_CELLS.y)), MIN_MANUAL_GRID_SIZE, MAX_MANUAL_GRID_SIZE)
-	var detected_columns := int(data.get("detected_grid_cells_x", 0))
-	var detected_rows := int(data.get("detected_grid_cells_y", 0))
-	var detected_valid := detected_columns > 0 and detected_rows > 0 \
-		and float(data.get("detected_grid_spacing_x", 0.0)) > 0.0 \
-		and float(data.get("detected_grid_spacing_y", 0.0)) > 0.0
-	var bounds := Vector2i(detected_columns, detected_rows) if detected_valid else Vector2i(columns, rows)
-	var used_ids := {}
-	var occupied: Array[Rect2i] = []
 	for index in range(data["pieces"].size()):
 		var item = data["pieces"][index]
 		var location := "pieces[%d]" % index
@@ -720,10 +596,6 @@ func _validate_saved_state(data: Dictionary) -> String:
 		for key in ["instance_id", "cell_x", "cell_y"]:
 			if not item.has(key) or not _saved_integer(item[key]):
 				return "%s.%s must be a whole number." % [location, key]
-		var instance_id := int(item["instance_id"])
-		if instance_id < 1 or used_ids.has(instance_id):
-			return "%s.instance_id must be positive and unique." % location
-		used_ids[instance_id] = true
 		for key in ["rotation", "layer"]:
 			if item.has(key) and not _saved_integer(item[key]):
 				return "%s.%s must be a whole number." % [location, key]
@@ -740,20 +612,17 @@ func _validate_saved_state(data: Dictionary) -> String:
 		for key in ["footprint_width", "footprint_height"]:
 			if not entry.has(key) or not _saved_integer(entry[key]):
 				return "%s.entry.%s must be a whole number." % [location, key]
-		var footprint := Vector2i(int(entry["footprint_width"]), int(entry["footprint_height"]))
-		if footprint.x < 1 or footprint.y < 1 or footprint.x > MAX_MANUAL_GRID_SIZE or footprint.y > MAX_MANUAL_GRID_SIZE:
-			return "%s.entry footprint must be between 1 and 100." % location
-		if int(item.get("rotation", 0)) % 180 != 0:
-			footprint = Vector2i(footprint.y, footprint.x)
-		var cell := Vector2i(int(item["cell_x"]), int(item["cell_y"]))
-		if cell.x < 0 or cell.y < 0 or cell.x + footprint.x > bounds.x or cell.y + footprint.y > bounds.y:
-			return "%s is outside the grid." % location
-		var rectangle := Rect2i(cell, footprint)
-		for previous in occupied:
-			if rectangle.intersects(previous):
-				return "%s overlaps another piece." % location
-		occupied.append(rectangle)
 	return ""
+
+func _saved_bounds(data: Dictionary) -> Vector2i:
+	var columns := clampi(int(data.get("manual_grid_columns", DEFAULT_MAP_CELLS.x)), MIN_MANUAL_GRID_SIZE, MAX_MANUAL_GRID_SIZE)
+	var rows := clampi(int(data.get("manual_grid_rows", DEFAULT_MAP_CELLS.y)), MIN_MANUAL_GRID_SIZE, MAX_MANUAL_GRID_SIZE)
+	var detected_columns := int(data.get("detected_grid_cells_x", 0))
+	var detected_rows := int(data.get("detected_grid_cells_y", 0))
+	var detected_valid := detected_columns > 0 and detected_rows > 0 \
+		and float(data.get("detected_grid_spacing_x", 0.0)) > 0.0 \
+		and float(data.get("detected_grid_spacing_y", 0.0)) > 0.0
+	return Vector2i(detected_columns, detected_rows) if detected_valid else Vector2i(columns, rows)
 
 func _saved_integer(value) -> bool:
 	return value is int or (value is float and is_finite(value) and value == floorf(value))
@@ -781,13 +650,7 @@ func export_visible_png(path: String) -> Error:
 	export_viewport.add_child(export_canvas)
 	export_canvas.custom_minimum_size = Vector2.ZERO
 	export_canvas.size = Vector2(export_size)
-	export_canvas._restore_layout(_serialize_layout(), embedded_images)
-	# Match the images currently displayed, even if their source files changed.
-	export_canvas.piece_textures = piece_textures.duplicate()
-	export_canvas.background_texture = background_texture
-	export_canvas.selected_id = -1
-	export_canvas.zoom_level = 1.0
-	export_canvas.view_offset = Vector2.ZERO
+	_copy_rendering_to(export_canvas)
 	export_canvas.queue_redraw()
 	await RenderingServer.frame_post_draw
 	var image := export_viewport.get_texture().get_image()
@@ -795,71 +658,30 @@ func export_visible_png(path: String) -> Error:
 	export_viewport.queue_free()
 	return error
 
-func _push_undo() -> void:
-	undo_stack.append(_snapshot())
-	if undo_stack.size() > 50:
-		undo_stack.pop_front()
-	redo_stack.clear()
-
-func _snapshot() -> Dictionary:
-	return {
-		"pieces": pieces.duplicate(true),
-		"selected_id": selected_id,
-		"next_id": next_id
-	}
-
-func _restore_snapshot(snapshot: Dictionary) -> void:
-	pieces = snapshot.get("pieces", []).duplicate(true)
-	selected_id = int(snapshot.get("selected_id", -1))
-	next_id = int(snapshot.get("next_id", 1))
-	selection_changed.emit(get_selected_piece())
-	state_changed.emit()
-	queue_redraw()
-
-func _piece_at(cell: Vector2i):
-	for index in range(pieces.size() - 1, -1, -1):
-		var piece = pieces[index]
-		var footprint := _piece_footprint(piece)
-		var rect := Rect2i(piece["cell"], footprint)
-		if rect.has_point(cell):
-			return piece
-	return null
-
-func _can_occupy(cell: Vector2i, footprint: Vector2i, ignored_instance_id: int = -1) -> bool:
-	var map_cells := _active_map_cells()
-	if footprint.x < 1 or footprint.y < 1 or cell.x < 0 or cell.y < 0 \
-			or cell.x + footprint.x > map_cells.x or cell.y + footprint.y > map_cells.y:
-		return false
-	var target := Rect2i(cell, footprint)
-	for piece in pieces:
-		if int(piece["instance_id"]) == ignored_instance_id:
-			continue
-		var occupied := Rect2i(piece["cell"], _piece_footprint(piece))
-		if target.intersects(occupied):
-			return false
-	return true
-
-func _find_nearest_free_cell(preferred: Vector2i, footprint: Vector2i, ignored_instance_id: int = -1) -> Vector2i:
-	var map_cells := _active_map_cells()
-	var maximum_radius := maxi(map_cells.x, map_cells.y)
-	for radius in range(maximum_radius + 1):
-		for y in range(preferred.y - radius, preferred.y + radius + 1):
-			for x in range(preferred.x - radius, preferred.x + radius + 1):
-				if radius > 0 and abs(x - preferred.x) < radius and abs(y - preferred.y) < radius:
-					continue
-				var candidate := Vector2i(x, y)
-				if candidate.x < 0 or candidate.y < 0 or candidate.x + footprint.x > map_cells.x or candidate.y + footprint.y > map_cells.y:
-					continue
-				if _can_occupy(candidate, footprint, ignored_instance_id):
-					return candidate
-	return Vector2i(-1, -1)
-
+# Export uses already displayed textures and never decodes the source files again.
+func _copy_rendering_to(target: BattleMapCanvas) -> void:
+	target._editor = _editor.copy_for_render()
+	target.grid_mode = grid_mode
+	target.grid_opacity = grid_opacity
+	target.grid_color = grid_color
+	target.manual_grid_cells = manual_grid_cells
+	target.background_path = background_path
+	target.background_texture = background_texture
+	target.detected_grid_origin = detected_grid_origin
+	target.detected_grid_spacing = detected_grid_spacing
+	target.detected_grid_end = detected_grid_end
+	target.detected_grid_cells = detected_grid_cells
+	target.detected_grid_confidence = detected_grid_confidence
+	target.embedded_images = embedded_images.duplicate(true)
+	target.piece_textures = piece_textures.duplicate()
+	target.zoom_level = 1.0
+	target.view_offset = Vector2.ZERO
 
 func _entry_snapshot_from_saved_piece(item: Dictionary) -> Dictionary:
 	var saved_entry: Dictionary = item["entry"]
 	var footprint := Vector2i(
-		clampi(int(saved_entry.get("footprint_width", 1)), 1, MAX_MANUAL_GRID_SIZE),
-		clampi(int(saved_entry.get("footprint_height", 1)), 1, MAX_MANUAL_GRID_SIZE)
+		int(saved_entry["footprint_width"]),
+		int(saved_entry["footprint_height"])
 	)
 	return {
 		"id": str(saved_entry.get("id", "missing")),
@@ -869,42 +691,6 @@ func _entry_snapshot_from_saved_piece(item: Dictionary) -> Dictionary:
 		"image_path": str(saved_entry.get("image_path", ""))
 	}
 
-
-func _normalized_entry_snapshot(entry: Dictionary) -> Dictionary:
-	return {
-		"id": str(entry.get("id", "missing")),
-		"name": str(entry.get("name", "Missing catalog entry")),
-		"group_id": str(entry.get("group_id", "")),
-		"footprint": entry.get("footprint", Vector2i.ONE),
-		"image_path": str(entry.get("image_path", ""))
-	}
-
-
-func _missing_entry_snapshot(entry_id: String) -> Dictionary:
-	return {
-		"id": entry_id,
-		"name": "Missing catalog entry",
-		"group_id": "",
-		"footprint": Vector2i.ONE,
-		"image_path": ""
-	}
-
-
-func _piece_footprint(piece) -> Vector2i:
-	var entry = piece.get("entry", null)
-	if not entry is Dictionary:
-		return Vector2i.ONE
-	var footprint: Vector2i = entry.get("footprint", Vector2i.ONE)
-	if int(piece.get("rotation", 0)) % 180 != 0:
-		return Vector2i(footprint.y, footprint.x)
-	return footprint
-
-func _clamp_cell(cell: Vector2i, footprint: Vector2i) -> Vector2i:
-	var map_cells := _active_map_cells()
-	return Vector2i(
-		clampi(cell.x, 0, map_cells.x - footprint.x),
-		clampi(cell.y, 0, map_cells.y - footprint.y)
-	)
 
 func _local_to_cell(local_position: Vector2) -> Vector2i:
 	local_position = (local_position - view_offset) / zoom_level
@@ -956,8 +742,9 @@ func _draw() -> void:
 	_draw_stage()
 	if grid_mode == GRID_SQUARE:
 		_draw_square_grid()
-	for piece in pieces:
-		_draw_piece(piece)
+	var stage := _editor.view()
+	for piece in stage["pieces"]:
+		_draw_piece(piece, stage["selected_id"])
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 func _draw_stage() -> void:
@@ -1005,12 +792,12 @@ func _draw_square_grid() -> void:
 		py = clampf(py - line_width * 0.5, map_rect.position.y, maxf(map_rect.position.y, map_rect.end.y - line_width))
 		draw_rect(Rect2(map_rect.position.x, py, map_rect.size.x, line_width), color, true)
 
-func _draw_piece(piece) -> void:
+func _draw_piece(piece: Dictionary, selected_id: int) -> void:
 	var entry = piece.get("entry", null)
 	if not entry is Dictionary:
 		return
 	var cell_size := _cell_size()
-	var footprint := _piece_footprint(piece)
+	var footprint: Vector2i = piece["occupied_footprint"]
 	var rect := Rect2(_grid_origin_pixels() + Vector2(piece["cell"]) * cell_size, Vector2(footprint) * cell_size)
 	var inset := minf(cell_size.x, cell_size.y) * 0.025
 	var icon_rect := rect.grow(-inset)
